@@ -229,15 +229,14 @@ ArmGen::ARMReg  arm_register_allocator::map_reg(arm_recompile_block *block,
 
     int greg_i = static_cast<int>(guest_reg);
 
-    if (host_map_regs[guest_map_regs[greg_i].host_reg].mapped)
+    if (guest_map_regs[greg_i].host_reg != ARMReg::INVALID_REG && host_map_regs[guest_map_regs[greg_i].host_reg].mapped)
     {
         assert((guest_reg == host_map_regs[guest_map_regs[greg_i].host_reg].mapped_reg)
             && "Host vs Guest mapping out of sync!");
 
-        return guest_reg;
+        return guest_map_regs[greg_i].host_reg;
     }
 
-    // Oh no, there is not any register left. Operation 2 spill begin!
     ARMReg mapped_host_reg;
     bool res = false;
     bool clobbered = false;
@@ -249,6 +248,7 @@ ArmGen::ARMReg  arm_register_allocator::map_reg(arm_recompile_block *block,
         return mapped_host_reg;
     }
 
+    // Oh no, there is not any register left. Operation 2 spill begin!
     if (res = find_best_to_spill(true, addr, thumb, mapped_host_reg, &clobbered))
     {
         res = find_best_to_spill(true, addr, thumb, mapped_host_reg, &clobbered);
@@ -564,7 +564,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     }
     }
 
-    loc.advance(insn->size);
+    loc = loc.advance(insn->size);
 
     cycles_count++;
     cycles_count_since_last_cond++;
@@ -581,7 +581,7 @@ void arm_instruction_visitor::recompile(arm_recompiler *recompiler)
 {
     cycles_count = 0;
     cpsr_write = false;
-    should_break = true;
+    should_break = false;
 
     // We should break when cpsr is modified (for example with BX instructions).
     while (!should_break && !cpsr_write)
@@ -892,12 +892,11 @@ void arm_recompiler::end_valid_condition_block(CCFlags cond)
 
 void arm_recompiler::gen_arm32_b(CCFlags flag, Operand2 op)
 {
-    auto imm32 = (op.Imm24() << 2) + 8;
-
     begin_valid_condition_block(flag);
+    
+    auto new_pc = op.Imm24();
 
-    auto new_loc = visitor.get_location_descriptor().advance(imm32);
-    gen_block_link(new_loc.pc);
+    gen_block_link(new_pc);
     
     end_valid_condition_block(flag);
 }
@@ -1124,6 +1123,9 @@ void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, boo
 
 void arm_recompiler::gen_block_link(address next_block_addr)
 {
+    // Flush
+    flush();
+
     // Adding cycles that runned from last branch
     block->ARMABI_call_function_cc(callback.add_cycles, reinterpret_cast<std::uint32_t>(callback.userdata),
         visitor.get_cycles_count_since_last_cond());
@@ -1133,9 +1135,6 @@ void arm_recompiler::gen_block_link(address next_block_addr)
     // After adding cycles, get the cycles remaing
     block->ARMABI_call_function_c(callback.get_remaining_cycles, reinterpret_cast<std::uint32_t>(callback.userdata));
     block->STR(ARMReg::R0, ARMReg::R10, block->jsi.offset_cycles_left, true);
-    
-    // Flush
-    flush();
 
     block->ARMABI_call_function_c_promise_ret(block->jit_rt_callback.get_next_block_addr, 
         reinterpret_cast<std::uint32_t>(block->jit_rt_callback.userdata));
@@ -1212,7 +1211,7 @@ block_descriptor arm_recompiler::recompile(address addr)
     block->CMP(ARMReg::R4, 0);
 
     std::uint8_t *b_fail_ptr = (u8*)block->GetCodePointer();
-    block->B_CC(CCFlags::CC_AL, 0);
+    block->B_CC(CCFlags::CC_AL, b_fail_ptr);
 
     block_descriptor descriptor;
     descriptor.begin = location_descriptor{ visitor.get_current_visiting_pc(), 0, 0 };
@@ -1220,6 +1219,9 @@ block_descriptor arm_recompiler::recompile(address addr)
 
     visitor.set_pc(addr);
     visitor.recompile(this);
+
+    // Try to flush right away to avoid unrelated flags
+    flush();
 
     // Come back to the place where we were supposed to end this if the ticks is not enough
     // Jump to the end of the block if not enough ticks is available
@@ -1230,7 +1232,6 @@ block_descriptor arm_recompiler::recompile(address addr)
 
     // Come back to the current, and emit load all registers
     block->SetCodePointer(crr_code);
-    flush();
 
     block->ARMABI_load_all_registers();
     

@@ -84,13 +84,13 @@ private:
     struct arm_host_reg_info
     {
         bool mapped = false;
-        ArmGen::ARMReg mapped_reg;
+        ArmGen::ARMReg mapped_reg = ArmGen::INVALID_REG;
     };
 
     struct arm_guest_reg_info
     {
         bool spilllock = false;
-        ArmGen::ARMReg host_reg;
+        ArmGen::ARMReg host_reg = ArmGen::INVALID_REG;
     };
 
     std::array<arm_host_reg_info, 16> host_map_regs;
