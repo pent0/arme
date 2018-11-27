@@ -1,9 +1,14 @@
 #include <Arme/Arme.h>
+#include <bitset>
 
 using namespace ArmGen;
 
 namespace arme
 {
+
+static const ARMReg JIT_STATE_REG = ARMReg::R8;
+
+#define SIGNEX(v, sb) ((v) | (((v) & (1 << (sb))) ? ~((1 << (sb))-1) : 0))
 
 #pragma region ANALYST
 
@@ -102,7 +107,7 @@ bool arm_analyst::is_reg_used(ArmGen::ARMReg reg, const address addr,
 static ARMReg *get_arm_reg_allocation_order(int &count)
 {
     static ARMReg useable_regs[] = {
-        R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R12
+        R0, R1, R2, R3, R4, R5, R6, R7, R9, R12
     };
 
     count = sizeof(useable_regs) / sizeof(ARMReg);
@@ -135,7 +140,8 @@ void arm_register_allocator::release_all_spill_lock()
 
 void arm_register_allocator::flush_reg(arm_recompile_block *block, ArmGen::ARMReg guest_reg)
 {
-    if (host_map_regs[guest_map_regs[guest_reg].host_reg].mapped == false)
+    if (guest_map_regs[guest_reg].host_reg == INVALID_REG ||
+        host_map_regs[guest_map_regs[guest_reg].host_reg].mapped == false)
     {
         return;
     }
@@ -143,7 +149,7 @@ void arm_register_allocator::flush_reg(arm_recompile_block *block, ArmGen::ARMRe
     ARMReg host_reg = guest_map_regs[guest_reg].host_reg;
 
     // Hey, we got the host reg here, let's move it to jit state corresponding register
-    block->STR(host_reg, ARMReg::R10, offsetof(jit_state, regs) + (guest_reg - R0) * sizeof(std::uint32_t),
+    block->STR(host_reg, JIT_STATE_REG, offsetof(jit_state, regs) + (guest_reg - R0) * sizeof(std::uint32_t),
         true);
 
     // Now that we store it, let's discard the register
@@ -152,9 +158,20 @@ void arm_register_allocator::flush_reg(arm_recompile_block *block, ArmGen::ARMRe
 
 void arm_register_allocator::discard_reg(ARMReg guest_reg)
 {
+    if (guest_map_regs[static_cast<int>(guest_reg)].host_reg == INVALID_REG)
+    {
+        return;
+    }
+
     host_map_regs[static_cast<int>(guest_map_regs[static_cast<int>(guest_reg)].host_reg)].mapped = false;
 }
 
+// The idea of this is:
+// An input register is an register that is used for input.
+// A clobbered register is an register that value will be override in the future.
+// Any register that is seen as input or clobbered in an instruction is asap known of its usage.
+// So until a certain point, if we seen that a register is not used for input, but value will be 
+// overwrite in the future, we can spill over it.
 bool arm_register_allocator::find_best_to_spill(bool unused_only, address addr, bool thumb, ArmGen::ARMReg &result,
     bool *clobbered)
 {
@@ -176,7 +193,7 @@ bool arm_register_allocator::find_best_to_spill(bool unused_only, address addr, 
 
         if (analyst->is_reg_clobbered(host_map_regs[static_cast<int>(host_reg)].mapped_reg, addr, lookahead_inst, thumb))
         {
-            // Awesome, we got one that can throw away
+            // Awesome, we got one that can throw away (at least now)
             result = host_reg;
             *clobbered = true;
 
@@ -195,7 +212,7 @@ bool arm_register_allocator::find_best_to_spill(bool unused_only, address addr, 
     return false;
 }
 
-bool arm_register_allocator::allocate_free_spot(ArmGen::ARMReg guest_reg, ArmGen::ARMReg &result)
+bool arm_register_allocator::allocate_free_spot(arm_recompile_block *block, ArmGen::ARMReg guest_reg, ArmGen::ARMReg &result)
 {
     int count = 0;
     ARMReg *allocatable = get_arm_reg_allocation_order(count);
@@ -205,6 +222,10 @@ bool arm_register_allocator::allocate_free_spot(ArmGen::ARMReg guest_reg, ArmGen
     {
         if (host_map_regs[allocatable[i]].mapped == false)
         {
+            // Moving the state register to the host register
+            block->LDR(allocatable[i], JIT_STATE_REG, offsetof(jit_state, regs) + static_cast<int>(guest_reg) * sizeof(std::uint32_t),
+                true);
+
             // Let's map the register
             host_map_regs[allocatable[i]].mapped = true;
             host_map_regs[allocatable[i]].mapped_reg = guest_reg;
@@ -241,7 +262,7 @@ ArmGen::ARMReg  arm_register_allocator::map_reg(arm_recompile_block *block,
     bool res = false;
     bool clobbered = false;
 
-    res = allocate_free_spot(guest_reg, mapped_host_reg);
+    res = allocate_free_spot(block, guest_reg, mapped_host_reg);
 
     if (res)
     {
@@ -266,7 +287,7 @@ ArmGen::ARMReg  arm_register_allocator::map_reg(arm_recompile_block *block,
             flush_reg(block, mapped_host_reg);
         }
 
-        res = allocate_free_spot(guest_reg, mapped_host_reg);
+        res = allocate_free_spot(block, guest_reg, mapped_host_reg);
         assert(res && "Register is spilled, not supposed to fail");
 
         return mapped_host_reg;
@@ -580,6 +601,8 @@ arm_instruction_visitor::arm_instruction_visitor(arm_analyst *analyst, jit_callb
 void arm_instruction_visitor::recompile(arm_recompiler *recompiler)
 {
     cycles_count = 0;
+    cycles_count_since_last_cond = 0;
+
     cpsr_write = false;
     should_break = false;
 
@@ -595,13 +618,13 @@ void arm_instruction_visitor::recompile(arm_recompiler *recompiler)
 #pragma region RECOMPILE_BLOCK
 void arm_recompile_block::ARMABI_save_all_registers()
 {
-    STMFD(ARMReg::R_SP, true, 1, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7,
+    PUSH(9, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7,
         ARMReg::R8, ARMReg::R9, ARMReg::R10, ARMReg::R11, ARMReg::R_LR);
 }
 
 void arm_recompile_block::ARMABI_load_all_registers()
 {
-    LDMFD(ARMReg::R_SP, true, 1, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7,
+    POP(9, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7,
         ARMReg::R8, ARMReg::R9, ARMReg::R10, ARMReg::R11, ARMReg::R_LR);
 }
 
@@ -610,7 +633,7 @@ void arm_recompile_block::ARMABI_call_function(void *func)
     PUSH(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);
     MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
     BL(ARMReg::R14);
-    POP(ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);
+    POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);
 }
 
 void arm_recompile_block::ARMABI_call_function_c_promise_ret(void *func, std::uint32_t arg1)
@@ -628,7 +651,7 @@ void arm_recompile_block::ARMABI_call_function_c(void *func, std::uint32_t arg1)
     MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
     MOVI2R(ARMReg::R0, arg1);
     BL(ARMReg::R14);
-    POP(ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);   
+    POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);   
 }
 
 void arm_recompile_block::ARMABI_call_function_cc(void *func, std::uint32_t arg1, std::uint32_t arg2)
@@ -638,7 +661,7 @@ void arm_recompile_block::ARMABI_call_function_cc(void *func, std::uint32_t arg1
     MOVI2R(ARMReg::R0, arg1);
     MOVI2R(ARMReg::R1, arg2);
     BL(ARMReg::R14);
-    POP(ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);   
+    POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);   
 }
 
 #pragma endregion
@@ -656,6 +679,11 @@ ARMReg arm_recompiler::remap_arm_reg(ARMReg reg)
     case ARMReg::R_SP:
     {
         return ARMReg::R11;
+    }
+
+    case ARMReg::R_LR:
+    {
+        return ARMReg::R10;
     }
 
     default:
@@ -676,6 +704,11 @@ Operand2 arm_recompiler::remap_operand2(Operand2 op)
         {
         case ARMReg::R13:
         {
+            return ARMReg::R11;
+        }
+
+        case ARMReg::R_LR:
+        {
             return ARMReg::R10;
         }
 
@@ -684,15 +717,9 @@ Operand2 arm_recompiler::remap_operand2(Operand2 op)
             return visitor.get_current_visiting_pc();
         }
 
-        case ARMReg::R11:
-        case ARMReg::R10:
-        {
-            assert(false, "Unhandled map");
-            break;
-        }
-
         default:
-            break;
+            return allocator.map_reg(block, reg, visitor.get_current_visiting_pc(),
+                visitor.is_thumb());
         }
     }
 
@@ -703,13 +730,12 @@ void arm_recompiler::flush()
 {
     allocator.flush_all(block);
    
-    // Save PC
-    block->MOVI2R(ARMReg::R4, visitor.get_current_visiting_pc());
-    block->STR(ARMReg::R4, ARMReg::R10, block->jsi.offset_reg + R15 * sizeof(std::uint32_t),
-        true);
-
     // Save SP
-    block->STR(ARMReg::R11, ARMReg::R10, block->jsi.offset_reg + R11 * sizeof(std::uint32_t),
+    block->STR(ARMReg::R11, JIT_STATE_REG, block->jsi.offset_reg + R_SP * sizeof(std::uint32_t),
+        true);
+    
+    // Save LR
+    block->STR(ARMReg::R10, JIT_STATE_REG, block->jsi.offset_reg + R_LR * sizeof(std::uint32_t),
         true);
 
     /** (From Dynarmic)
@@ -746,15 +772,33 @@ void arm_recompiler::flush()
     end_gen_cpsr_update();
 }
 
+void arm_recompiler::save_pc_from_visitor()
+{
+    set_pc(visitor.get_current_visiting_pc());
+}
+
+void arm_recompiler::set_pc(ArmGen::ARMReg reg)
+{
+    block->STR(reg, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
+}
+
+void arm_recompiler::set_pc(const std::uint32_t off)
+{
+    block->PUSH(1, ARMReg::R4);
+    block->MOVI2R(ARMReg::R4, off);
+    block->STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
+    block->POP(1, ARMReg::R4);
+}
+
 void arm_recompiler::begin_gen_cpsr_update()
 {
     block->PUSH(2, ARMReg::R4, ARMReg::R5);
-    block->LDR(ARMReg::R4, ARMReg::R10, offsetof(jit_state, cpsr), true);
+    block->LDR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
 }
 
 void arm_recompiler::end_gen_cpsr_update()
 {
-    block->STR(ARMReg::R4, ARMReg::R10, offsetof(jit_state, cpsr), true);
+    block->STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
     block->POP(2, ARMReg::R4, ARMReg::R5);
 }
 
@@ -829,7 +873,7 @@ void arm_recompiler::begin_valid_condition_block(CCFlags cond)
     b_addr = (u8*)block->GetCodePointer();
 
     // Generate a temp conditional instruction
-    block->B_CC(cond, 0);
+    block->B_CC(cond, b_addr);
 }
 
 void arm_recompiler::end_valid_condition_block(CCFlags cond)
@@ -888,16 +932,19 @@ void arm_recompiler::end_valid_condition_block(CCFlags cond)
     }
 
     block->SetCodePointer(crr_addr);
+    save_pc_from_visitor();
 }
 
 void arm_recompiler::gen_arm32_b(CCFlags flag, Operand2 op)
 {
     begin_valid_condition_block(flag);
     
-    auto new_pc = op.Imm24();
+    int adv = op.Imm24() >> 6;
+    auto new_des = visitor.get_location_descriptor().advance(adv);
 
-    gen_block_link(new_pc);
+    set_pc(new_des.pc);
     
+    gen_block_link();
     end_valid_condition_block(flag);
 }
 
@@ -1121,7 +1168,7 @@ void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, boo
     gen_memory_write(callback.read_mem16, reg1, reg2, base, subtract);
 }
 
-void arm_recompiler::gen_block_link(address next_block_addr)
+void arm_recompiler::gen_block_link()
 {
     // Flush
     flush();
@@ -1133,12 +1180,12 @@ void arm_recompiler::gen_block_link(address next_block_addr)
     visitor.get_cycles_count_since_last_cond() = 0;
 
     // After adding cycles, get the cycles remaing
-    block->ARMABI_call_function_c(callback.get_remaining_cycles, reinterpret_cast<std::uint32_t>(callback.userdata));
-    block->STR(ARMReg::R0, ARMReg::R10, block->jsi.offset_cycles_left, true);
+    block->ARMABI_call_function_c_promise_ret(callback.get_remaining_cycles, reinterpret_cast<std::uint32_t>(callback.userdata));
+    block->STR(ARMReg::R0, JIT_STATE_REG, block->jsi.offset_cycles_left, true);
 
     block->ARMABI_call_function_c_promise_ret(block->jit_rt_callback.get_next_block_addr, 
         reinterpret_cast<std::uint32_t>(block->jit_rt_callback.userdata));
-    
+
     block->B(ARMReg::R0);
 }
 
@@ -1152,14 +1199,14 @@ void arm_recompile_block::gen_run_code()
 
     // The JIT state is passed to the current block
     // It should be stored in parameter 0.
-    MOV(ARMReg::R10, ARMReg::R0);
+    MOV(ARMReg::R8, ARMReg::R0);
 
     ARMABI_call_function_c_promise_ret(reinterpret_cast<void*>(callback.get_remaining_cycles),
         reinterpret_cast<std::uint32_t>(callback.userdata));
 
     // Store the remaining cycles to JIT state
-    STR(ARMReg::R4, ARMReg::R10, jsi.offset_cycles_left, true);
-    STR(ARMReg::R4, ARMReg::R10, jsi.offset_cycles_to_run, true);
+    STR(ARMReg::R0, JIT_STATE_REG, jsi.offset_cycles_left, true);
+    STR(ARMReg::R0, JIT_STATE_REG, jsi.offset_cycles_to_run, true);
 
     // This is where we will loop back if the ticks are still available
     void *loop_start = (void*)(GetCodePointer());
@@ -1172,7 +1219,7 @@ void arm_recompile_block::gen_run_code()
     BL(ARMReg::R0);
     
     // Now check for the remaning ticks.
-    LDR(ARMReg::R4, ARMReg::R10, jsi.offset_cycles_left, true);
+    LDR(ARMReg::R4, JIT_STATE_REG, jsi.offset_cycles_left, true);
     CMP(ARMReg::R4, 0);
 
     B_CC(CCFlags::CC_GT, loop_start);
@@ -1207,11 +1254,11 @@ block_descriptor arm_recompiler::recompile(address addr)
 
     block->ARMABI_save_all_registers();
 
-    block->LDR(ARMReg::R4, ARMReg::R10, block->jsi.offset_cycles_left, true);
+    block->LDR(ARMReg::R4, JIT_STATE_REG, block->jsi.offset_cycles_left, true);
     block->CMP(ARMReg::R4, 0);
 
     std::uint8_t *b_fail_ptr = (u8*)block->GetCodePointer();
-    block->B_CC(CCFlags::CC_AL, b_fail_ptr);
+    block->B_CC(CCFlags::CC_LE, b_fail_ptr);
 
     block_descriptor descriptor;
     descriptor.begin = location_descriptor{ visitor.get_current_visiting_pc(), 0, 0 };
@@ -1233,7 +1280,13 @@ block_descriptor arm_recompiler::recompile(address addr)
     // Come back to the current, and emit load all registers
     block->SetCodePointer(crr_code);
 
+    /* Dummy used to check if the branch has reached here yet
+    block->MOV(ARMReg::R0, JIT_STATE_REG);
+    block->ARMABI_call_function(callback.dummy);
+    */
+
     block->ARMABI_load_all_registers();
+    block->B(ARMReg::R14);
     
     descriptor.end = location_descriptor{ visitor.get_current_visiting_pc(), 0, 0 };
     descriptor.size = block->GetCodePointer() - reinterpret_cast<const std::uint8_t*>(code);

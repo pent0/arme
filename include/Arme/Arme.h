@@ -33,13 +33,15 @@ typedef void            (*add_cycles_func)(void*, std::uint32_t);
 typedef std::uint32_t            (*cp_read_func)(void*, std::uint32_t);
 typedef void                     (*cp_write_func)(void*, std::uint32_t, std::uint32_t);
 
+typedef void                     (*dummy_func)(void*);
+
 struct location_descriptor
 {
     address         pc;
     std::uint32_t   cpsr;
     std::uint32_t   fpcsr;
 
-    location_descriptor advance(address amount)
+    location_descriptor advance(int amount)
     {
         return location_descriptor{ pc + amount, cpsr, fpcsr };
     }
@@ -62,6 +64,8 @@ struct jit_callback
 
     get_remaining_cycles_func   get_remaining_cycles;
     add_cycles_func             add_cycles;
+
+    dummy_func                  dummy;
 };
 
 typedef code_ptr     (*get_next_block_addr_func)(void*);
@@ -98,7 +102,7 @@ private:
 
     arm_analyst *analyst;
 
-    bool allocate_free_spot(ArmGen::ARMReg guest_reg, ArmGen::ARMReg &result);
+    bool allocate_free_spot(arm_recompile_block *block, ArmGen::ARMReg guest_reg, ArmGen::ARMReg &result);
 
     bool  find_best_to_spill(bool unused_only, address addr, bool thumb, ArmGen::ARMReg &result
         , bool *clobbered);
@@ -171,13 +175,13 @@ private:
 
     location_descriptor loc;
 
-    bool            t_reg;
+    bool                t_reg;
 
-    csh             handler;
-    cs_insn         *insn;
-    jit_callback    callback;
+    csh                 handler;
+    cs_insn            *insn;
+    jit_callback        callback;
 
-    arm_analyst     *analyst;
+    arm_analyst        *analyst;
 
     std::uint16_t op_counter = 0;
 
@@ -341,7 +345,7 @@ struct arm_recompiler
 
     arm_analyst              *analyst;
     arm_register_allocator    allocator;
-    arm_instruction_visitor                       visitor;
+    arm_instruction_visitor   visitor;
 
     std::unordered_map<address, block_descriptor> blocks;
 
@@ -362,11 +366,16 @@ struct arm_recompiler
     void begin_valid_condition_block(CCFlags cond);
     void end_valid_condition_block(CCFlags cond);
 
-    void gen_block_link(address next_block_addr);
+    void gen_block_link();
     void gen_arm32_b(CCFlags flag, ArmGen::Operand2 op);
 
     void begin_gen_cpsr_update();
     void end_gen_cpsr_update();
+
+    void save_pc_from_visitor();
+
+    void set_pc(ArmGen::ARMReg reg);
+    void set_pc(const std::uint32_t off);
 
     void gen_cpsr_update_c_flag();
     void gen_cpsr_update_z_flag();

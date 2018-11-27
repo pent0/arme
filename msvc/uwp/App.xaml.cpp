@@ -94,6 +94,12 @@ static std::uint32_t get_remaining_ticks(void *userdata)
     return data->ticks_left;
 }
 
+static void dummy(void *userdata)
+{
+    arme::jit_state *data = reinterpret_cast<arme::jit_state*>(userdata);
+    int a = 5;
+}
+
 /// <summary>
 /// Invoked when the application is launched normally by the end user.  Other entry points
 /// will be used such as when the application is launched to open a specific file.
@@ -163,6 +169,7 @@ void App::OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEvent
     callback.userdata = &cbd;
     callback.add_cycles = add_ticks;
     callback.get_remaining_cycles = get_remaining_ticks;
+    callback.dummy = dummy;
 
     cbd.ticks_left = 1;
 
@@ -171,10 +178,12 @@ void App::OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEvent
     dejit.state.regs[0] = 1;
     dejit.state.regs[1] = 2;
 
-    write_memory32(&cbd, 0, 0xE0811000);
-    write_memory32(&cbd, 4, 0xEA000000);
+    write_memory32(&cbd, 0, 0xE0811000);    // ADD r0, r0, r1
+    write_memory32(&cbd, 4, 0xEA000000);    // B +-0
 
     dejit.execute();
+
+    assert((dejit.state.regs[0] == 3) && "Unexpected value");
 }
 
 /// <summary>
