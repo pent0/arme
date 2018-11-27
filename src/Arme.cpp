@@ -396,8 +396,32 @@ static CCFlags  cs_cc_to_jit_cc(arm_cc cc)
 
 static ARMReg cs_arm_op_to_reg(cs_arm_op &op)
 {
-    assert((op.type == ARM_OP_REG) && "The Capstone operand is not an register!");
-    return static_cast<ARMReg>((op.reg - ARM_REG_R0) + ARMReg::R0);
+    assert((op.type == ARM_OP_REG || op.type == ARM_OP_MEM) && "The Capstone operand is not an register!");
+
+    arm_reg reg = (op.type == ARM_OP_MEM) ? op.mem.base : static_cast<arm_reg>(op.reg);
+
+    switch (reg)
+    {
+    case ARM_REG_SP:
+    {
+        return ARMReg::R_SP;
+    }
+
+    case ARM_REG_PC:
+    {
+        return ARMReg::R_PC;
+    }
+
+    case ARM_REG_LR:
+    {
+        return ARMReg::R_LR;
+    }
+
+    default:
+        break;
+    }
+
+    return static_cast<ARMReg>((reg - ARM_REG_R0) + ARMReg::R0);
 }
 
 static Operand2 cs_arm_op_to_operand2(cs_arm_op &op)
@@ -566,9 +590,11 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 #define DECLARE_ALU_BASE(insn, func_name)      \
     case ARM_INS_##insn:            \
     {                               \
-        recompiler->gen_arm32_##func_name(get_next_reg_from_cs(arm), get_next_reg_from_cs(arm),   \
-            get_next_op_from_cs(arm), arm->operands[op_counter].subtracted);            \
-        break;                                                                          \
+        auto r1 = get_next_reg_from_cs(arm);        \
+        auto r2 = get_next_reg_from_cs(arm);        \
+        recompiler->gen_arm32_##func_name(r1, r2,           \
+            arm->operands[op_counter - 1].mem.disp, arm->operands[op_counter - 1].subtracted, arm->writeback);   \
+        break;                                                                                              \
     }
 
     DECLARE_ALU_BASE(STR, str)
@@ -1042,130 +1068,157 @@ void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 }
 
-void arm_recompiler::gen_memory_write(void *func, ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Operand2 op, bool subtract, bool write_back)
 {
-    // Preserves these registers
-    block->PUSH(2, ARMReg::R0, ARMReg::R1);
+    assert(op.GetType() != OpType::TYPE_REG);
 
-    // Move register 2 to reg4
-    block->MOV(ARMReg::R0, remap_operand2(reg2));
-    block->MOV(ARMReg::R1, remap_operand2(base));
+    ARMReg mapped_source_reg = remap_arm_reg(source);
+    ARMReg mapped_base_reg = remap_arm_reg(base);
 
-    // Next, add them with base. The value will stay in R4
-    if (subtract)
-    {
-        block->SUB(ARMReg::R1, ARMReg::R0, ARMReg::R1);
-    }
-    else
-    {
-        block->ADD(ARMReg::R1, ARMReg::R0, ARMReg::R1);
-    }
-
-    // Nice, we now got the address in R1, let's move the userdata to r0,
-    // function pointer in r14 and branch.
-    block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
-    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
-
-    block->BL(ARMReg::R14);
-
-    // Finally, read it back
-    block->POP(2, ARMReg::R0, ARMReg::R1);
-}
-
-void arm_recompiler::gen_memory_read(void *func, ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
-{
-    ARMReg mapped_dest_reg = remap_arm_reg(reg1);
-
-    // The readed value will be returned in r0 anyway, so if the destination is r0,
-    // that means we trash it and don't push it
-    if (mapped_dest_reg != ARMReg::R0)
-    {
-        if (mapped_dest_reg == ARMReg::R1)
-        {
-            block->PUSH(1, ARMReg::R0);
-        } else
-        {
-            // Preserves these registers
-            block->PUSH(2, ARMReg::R0, ARMReg::R1);
-        }
-    }
-    else
-    {
-        block->PUSH(1, ARMReg::R1);
-    }
-
-    // Move register 2 to reg4
-    block->MOV(ARMReg::R0, remap_operand2(reg2));
-    block->MOV(ARMReg::R1, remap_operand2(base));
-
-    // Next, add them with base. The value will stay in R4
-    if (subtract)
-    {
-        block->SUB(ARMReg::R1, ARMReg::R0, ARMReg::R1);
-    }
-    else
-    {
-        block->ADD(ARMReg::R1, ARMReg::R0, ARMReg::R1);
-    }
-
-    // Nice, we now got the address in R1, let's move the userdata to r0,
-    // function pointer in r14 and branch.
-    block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
-    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
-
-    block->BL(ARMReg::R14);
-
-    // We got the value in r0!
+    block->PUSH(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
     
-    // If the destination reg is already r0, we don't have to do anything
-    if (reg1 != ARMReg::R0)
+    if (base == ARMReg::R_PC)
     {
-        block->MOV(mapped_dest_reg, ARMReg::R0);
+        std::uint32_t addr = subtract ? visitor.get_current_visiting_pc() + op.Imm12() :
+            visitor.get_current_visiting_pc() - op.Imm12();
 
-        if (reg1 == ARMReg::R1)
+        block->MOV(ARMReg::R4, addr);
+    }
+    else
+    {
+        // Move register 2 to reg4
+        block->MOV(ARMReg::R4, mapped_base_reg);
+
+        // Next, add them with base. The value will stay in R4
+        if (subtract)
         {
-            block->POP(1, ARMReg::R0);
+            block->SUB(ARMReg::R4, ARMReg::R4, op);
         }
         else
         {
-            block->POP(2, ARMReg::R0, ARMReg::R1);
+            block->ADD(ARMReg::R4, ARMReg::R4, op);
         }
     }
+
+    block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
+    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
+    block->MOV(ARMReg::R1, ARMReg::R4);
+    block->MOV(ARMReg::R2, mapped_source_reg);
+
+    block->BL(ARMReg::R14);
+
+    if (write_back)
+    {
+        assert(base != ARMReg::R_PC);
+        block->MOV(mapped_base_reg, ARMReg::R4);
+    }
+
+    block->POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
+
+}
+
+void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Operand2 op, bool subtract, bool write_back)
+{
+    assert(op.GetType() != OpType::TYPE_REG);
+
+    ARMReg mapped_dest_reg = remap_arm_reg(dest);
+    ARMReg mapped_base_reg = remap_arm_reg(base);
+
+    // Using local variable R4. Make sure we doesn't push this if the mapped dest is r4,
+    // since it's going to be clobbered.
+    if (mapped_dest_reg != ARMReg::R4)
+    {
+        block->PUSH(1, ARMReg::R4);
+    }
+
+    block->PUSH(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
+
+    if (base == ARMReg::R_PC)
+    {
+        std::uint32_t addr = subtract ? visitor.get_current_visiting_pc() + op.Imm12() :
+            visitor.get_current_visiting_pc() - op.Imm12();
+
+        block->MOV(ARMReg::R4, addr);
+    } 
     else
     {
-        // Finally, read it back
-        block->POP(1, ARMReg::R1);
+        // Move register 2 to reg4
+        block->MOV(ARMReg::R4, mapped_base_reg);
+
+        // Next, add them with base. The value will stay in R4
+        if (subtract)
+        {
+            block->SUB(ARMReg::R4, ARMReg::R4, op);
+        }
+        else
+        {
+            block->ADD(ARMReg::R4, ARMReg::R4, op);
+        }
+    }
+
+    // Nice, we now got the address in R1, let's move the userdata to r0,
+    // function pointer in r14 and branch.
+    block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
+    block->MOV(ARMReg::R1, ARMReg::R4);
+    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
+
+    block->BL(ARMReg::R14);
+
+    if (dest == ARMReg::R_PC)
+    {
+        set_pc(ARMReg::R0);
+        gen_block_link();
+    }
+    else
+    {    
+        // We got the value in r0!
+        block->MOV(mapped_dest_reg, ARMReg::R0);
+    }
+
+    if (write_back)
+    {
+        assert(base != ARMReg::R_PC);
+        block->MOV(mapped_base_reg, ARMReg::R4);
+    }
+
+    // Should be in order
+
+    block->POP(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
+
+    if (mapped_dest_reg != ARMReg::R4)
+    {
+        block->POP(1, ARMReg::R4);
     }
 }
 
-void arm_recompiler::gen_arm32_str(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_arm32_str(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
 {
-    gen_memory_write(callback.write_mem32, reg1, reg2, base, subtract);
+    gen_memory_write(callback.write_mem32, reg1, reg2, base, subtract, write_back);
 }
 
-void arm_recompiler::gen_arm32_ldr(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_arm32_ldr(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
 {
-    gen_memory_read(callback.read_mem32, reg1, reg2, base, subtract);
+    gen_memory_read(callback.read_mem32, reg1, reg2, base, subtract, write_back);
 }
 
-void arm_recompiler::gen_arm32_strb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_arm32_strb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
 {
-    gen_memory_write(callback.write_mem8, reg1, reg2, base, subtract);
+    gen_memory_write(callback.write_mem8, reg1, reg2, base, subtract, write_back);
 }
 
-void arm_recompiler::gen_arm32_ldrb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_arm32_ldrb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
 {
-    gen_memory_write(callback.read_mem8, reg1, reg2, base, subtract);   
+    gen_memory_write(callback.read_mem8, reg1, reg2, base, subtract, write_back);
 }
 
-void arm_recompiler::gen_arm32_strh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_arm32_strh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
 {
-    gen_memory_write(callback.write_mem16, reg1, reg2, base, subtract);
+    gen_memory_write(callback.write_mem16, reg1, reg2, base, subtract, write_back);
 }
 
-void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract)
+void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
 {
-    gen_memory_write(callback.read_mem16, reg1, reg2, base, subtract);
+    gen_memory_write(callback.read_mem16, reg1, reg2, base, subtract, write_back);
 }
 
 void arm_recompiler::gen_block_link()
@@ -1199,7 +1252,10 @@ void arm_recompile_block::gen_run_code()
 
     // The JIT state is passed to the current block
     // It should be stored in parameter 0.
-    MOV(ARMReg::R8, ARMReg::R0);
+    MOV(JIT_STATE_REG, ARMReg::R0);
+
+    // Now, store the SP in R11
+    LDR(ARMReg::R11, JIT_STATE_REG, jsi.offset_reg + R13 * sizeof(std::uint32_t), true);
 
     ARMABI_call_function_c_promise_ret(reinterpret_cast<void*>(callback.get_remaining_cycles),
         reinterpret_cast<std::uint32_t>(callback.userdata));

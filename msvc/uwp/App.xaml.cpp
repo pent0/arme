@@ -171,15 +171,19 @@ void App::OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEvent
     callback.get_remaining_cycles = get_remaining_ticks;
     callback.dummy = dummy;
 
-    cbd.ticks_left = 1;
+    cbd.ticks_left = 2;
 
     arme::jit dejit{ callback };
     dejit.state.regs[15] = 0;
     dejit.state.regs[0] = 1;
     dejit.state.regs[1] = 2;
+    dejit.state.regs[13] = 1016;
+
+    write_memory32(&cbd, 1024, 25);
 
     write_memory32(&cbd, 0, 0xE0811000);    // ADD r0, r0, r1
-    write_memory32(&cbd, 4, 0xEA000000);    // B +-0
+    write_memory32(&cbd, 4, 0xE59D2008);    // LDR r2, [sp, #8]
+    write_memory32(&cbd, 8, 0xEA000000);    // B +-0
 
     dejit.execute();
 

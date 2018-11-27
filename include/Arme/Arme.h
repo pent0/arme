@@ -400,17 +400,19 @@ struct arm_recompiler
     void gen_arm32_smull(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg4);
     void gen_arm32_smlal(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg4);
 
-    void gen_arm32_str(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false);
-    void gen_arm32_ldr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false);
+    void gen_arm32_str(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
+    void gen_arm32_ldr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false, bool write_back = false);
     
-    void gen_arm32_strb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false);
-    void gen_arm32_ldrb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false);
+    void gen_arm32_strb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
+    void gen_arm32_ldrb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false, bool write_back = false);
     
-    void gen_arm32_strh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false);
-    void gen_arm32_ldrh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false);
+    void gen_arm32_strh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
+    void gen_arm32_ldrh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
 
-    void gen_memory_write(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false);
-    void gen_memory_read(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false);
+    void gen_memory_write(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
+        bool write_back = false);
+    void gen_memory_read(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
+        bool write_back = false);
 
     void flush();
 
