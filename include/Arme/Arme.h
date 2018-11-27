@@ -8,9 +8,13 @@
 
 #include "ArmEmitter.h"
 
-#include <capstone/capstone.h>
-
 #define UNREACHABLE(msg) assert(false && msg)
+
+// Foward declaration
+typedef size_t csh;
+
+struct cs_insn;
+struct cs_arm;
 
 namespace arme
 {
@@ -410,9 +414,9 @@ struct arm_recompiler
     void gen_arm32_ldrh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
 
     void gen_memory_write(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
-        bool write_back = false);
+        bool write_back = false, bool is_post_index = false);
     void gen_memory_read(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
-        bool write_back = false);
+        bool write_back = false, bool is_post_index = false);
 
     void flush();
 

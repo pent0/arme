@@ -8,27 +8,6 @@
       <UniqueIdentifier>d4535558-1bc4-4f23-a714-1024c47a28a0</UniqueIdentifier>
       <Extensions>bmp;fbx;gif;jpg;jpeg;tga;tiff;tif;png</Extensions>
     </Filter>
-    <Filter Include="External">
-      <UniqueIdentifier>{e6dd60c0-2a53-451b-86a7-f546e19e19e6}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="External\Capstone">
-      <UniqueIdentifier>{a6617fd7-1352-4946-98ba-6176e8a60712}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="External\Capstone\Include">
-      <UniqueIdentifier>{db72cad7-4c17-4ccb-8fd2-aadc6b608d91}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="External\Capstone\Source">
-      <UniqueIdentifier>{f03298e7-0066-462a-9eab-cd9183884bf5}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Lib">
-      <UniqueIdentifier>{d55027f5-f21c-4e31-a56d-f169c445904d}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Lib\Include">
-      <UniqueIdentifier>{099af085-2ace-4803-8c7b-0bf32050ad87}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Lib\Source">
-      <UniqueIdentifier>{a7bedfa9-b181-48f5-aa6f-83a7df33fd45}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml" />
@@ -37,144 +16,12 @@
     <ClCompile Include="App.xaml.cpp" />
     <ClCompile Include="MainPage.xaml.cpp" />
     <ClCompile Include="pch.cpp" />
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMDisassembler.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMInstPrinter.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMMapping.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMModule.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\Arme.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\ArmEmitter.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\StringUtils.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\MemoryUtil.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\ARMCPUDetect.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\cs.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\MCInst.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\MCInstrDesc.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\MCRegisterInfo.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\SStream.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\utils.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="Miscs.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\MsgHandler.cpp">
-      <Filter>Lib\Source</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="App.xaml.h" />
     <ClInclude Include="MainPage.xaml.h" />
     <ClInclude Include="..\..\include\Arme\StringUtils.h" />
-    <ClInclude Include="..\..\external\capstone\utils.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\arch\ARM\ARMAddressingModes.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\arch\ARM\ARMBaseInfo.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\arch\ARM\ARMDisassembler.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\arch\ARM\ARMInstPrinter.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\arch\ARM\ARMMapping.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\arch\ARM\ARMModule.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\cs_priv.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\LEB128.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\MathExtras.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\MCDisassembler.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\MCFixedLenDisassembler.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\MCInst.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\MCInstrDesc.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\MCRegisterInfo.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\external\capstone\SStream.h">
-      <Filter>External\Capstone\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\MsgHandler.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\MemoryUtil.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\CommonWindows.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\CommonTypes.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\CommonFuncs.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\Common.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\CodeBlock.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\ArmEmitter.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\ArmCommon.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\Arme.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\Arme\CPUDetect.h">
-      <Filter>Lib\Include</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\LockScreenLogo.scale-200.png">
@@ -204,27 +51,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="uwp_TemporaryKey.pfx" />
-    <None Include="..\..\external\capstone\arch\ARM\ARMGenAsmWriter.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
-    <None Include="..\..\external\capstone\arch\ARM\ARMGenDisassemblerTables.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
-    <None Include="..\..\external\capstone\arch\ARM\ARMGenInstrInfo.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
-    <None Include="..\..\external\capstone\arch\ARM\ARMGenRegisterInfo.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
-    <None Include="..\..\external\capstone\arch\ARM\ARMGenSubtargetInfo.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
-    <None Include="..\..\external\capstone\arch\ARM\ARMMappingInsn.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
-    <None Include="..\..\external\capstone\arch\ARM\ARMMappingInsnOp.inc">
-      <Filter>External\Capstone\Include</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <Page Include="MainPage.xaml" />

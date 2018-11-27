@@ -1,5 +1,9 @@
 #include <Arme/Arme.h>
-#include <bitset>
+
+#define CAPSTONE_HAS_ARM
+#define CAPSTONE_USE_SYS_DYN_MEM
+
+#include <capstone/capstone.h>
 
 using namespace ArmGen;
 
@@ -593,7 +597,8 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         auto r1 = get_next_reg_from_cs(arm);        \
         auto r2 = get_next_reg_from_cs(arm);        \
         recompiler->gen_arm32_##func_name(r1, r2,           \
-            arm->operands[op_counter - 1].mem.disp, arm->operands[op_counter - 1].subtracted, arm->writeback);   \
+            arm->operands[op_counter - 1].mem.disp, arm->operands[op_counter - 1].subtracted, arm->writeback   \
+            );                                                           \
         break;                                                                                              \
     }
 
@@ -1068,7 +1073,8 @@ void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 }
 
-void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Operand2 op, bool subtract, bool write_back)
+void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Operand2 op, bool subtract, bool write_back,
+    bool post_indexed)
 {
     assert(op.GetType() != OpType::TYPE_REG);
 
@@ -1076,11 +1082,15 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     ARMReg mapped_base_reg = remap_arm_reg(base);
 
     block->PUSH(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
-    
+
     if (base == ARMReg::R_PC)
     {
-        std::uint32_t addr = subtract ? visitor.get_current_visiting_pc() + op.Imm12() :
-            visitor.get_current_visiting_pc() - op.Imm12();
+        std::uint32_t addr = visitor.get_current_visiting_pc();
+
+        if (!post_indexed)
+        {
+            addr += subtract ? -(s32)op.Imm12() : op.Imm12();
+        }
 
         block->MOV(ARMReg::R4, addr);
     }
@@ -1089,14 +1099,17 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
         // Move register 2 to reg4
         block->MOV(ARMReg::R4, mapped_base_reg);
 
-        // Next, add them with base. The value will stay in R4
-        if (subtract)
+        if (!post_indexed)
         {
-            block->SUB(ARMReg::R4, ARMReg::R4, op);
-        }
-        else
-        {
-            block->ADD(ARMReg::R4, ARMReg::R4, op);
+            // Next, add them with base. The value will stay in R4
+            if (subtract)
+            {
+                block->SUB(ARMReg::R4, ARMReg::R4, op);
+            }
+            else
+            {
+                block->ADD(ARMReg::R4, ARMReg::R4, op);
+            }
         }
     }
 
@@ -1110,6 +1123,20 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     if (write_back)
     {
         assert(base != ARMReg::R_PC);
+
+        if (post_indexed)
+        {
+            // Next, add them with base. The value will stay in R4
+            if (subtract)
+            {
+                block->SUB(ARMReg::R4, ARMReg::R4, op);
+            }
+            else
+            {
+                block->ADD(ARMReg::R4, ARMReg::R4, op);
+            }
+        }
+
         block->MOV(mapped_base_reg, ARMReg::R4);
     }
 
@@ -1117,7 +1144,8 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
 
 }
 
-void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Operand2 op, bool subtract, bool write_back)
+void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Operand2 op, bool subtract, bool write_back,
+    bool post_indexed)
 {
     assert(op.GetType() != OpType::TYPE_REG);
 
@@ -1135,8 +1163,12 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
 
     if (base == ARMReg::R_PC)
     {
-        std::uint32_t addr = subtract ? visitor.get_current_visiting_pc() + op.Imm12() :
-            visitor.get_current_visiting_pc() - op.Imm12();
+        std::uint32_t addr = visitor.get_current_visiting_pc();
+
+        if (!post_indexed)
+        {
+            addr += subtract ? -(s32)op.Imm12() : op.Imm12();
+        }
 
         block->MOV(ARMReg::R4, addr);
     } 
@@ -1145,14 +1177,17 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
         // Move register 2 to reg4
         block->MOV(ARMReg::R4, mapped_base_reg);
 
-        // Next, add them with base. The value will stay in R4
-        if (subtract)
+        if (!post_indexed)
         {
-            block->SUB(ARMReg::R4, ARMReg::R4, op);
-        }
-        else
-        {
-            block->ADD(ARMReg::R4, ARMReg::R4, op);
+            // Next, add them with base. The value will stay in R4
+            if (subtract)
+            {
+                block->SUB(ARMReg::R4, ARMReg::R4, op);
+            }
+            else
+            {
+                block->ADD(ARMReg::R4, ARMReg::R4, op);
+            }
         }
     }
 
@@ -1178,6 +1213,20 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     if (write_back)
     {
         assert(base != ARMReg::R_PC);
+
+        if (post_indexed)
+        {
+            // Next, add them with base. The value will stay in R4
+            if (subtract)
+            {
+                block->SUB(ARMReg::R4, ARMReg::R4, op);
+            }
+            else
+            {
+                block->ADD(ARMReg::R4, ARMReg::R4, op);
+            }
+        }
+
         block->MOV(mapped_base_reg, ARMReg::R4);
     }
 
@@ -1228,7 +1277,7 @@ void arm_recompiler::gen_block_link()
 
     // Adding cycles that runned from last branch
     block->ARMABI_call_function_cc(callback.add_cycles, reinterpret_cast<std::uint32_t>(callback.userdata),
-        visitor.get_cycles_count_since_last_cond());
+        visitor.get_cycles_count_since_last_cond() + 1);
 
     visitor.get_cycles_count_since_last_cond() = 0;
 

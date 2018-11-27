@@ -171,7 +171,7 @@ void App::OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEvent
     callback.get_remaining_cycles = get_remaining_ticks;
     callback.dummy = dummy;
 
-    cbd.ticks_left = 2;
+    cbd.ticks_left = 12;
 
     arme::jit dejit{ callback };
     dejit.state.regs[15] = 0;
@@ -186,7 +186,9 @@ void App::OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEvent
     write_memory32(&cbd, 8, 0xEA000000);    // B +-0
 
     dejit.execute();
+    assert((dejit.state.regs[0] == 3) && "Unexpected value");
 
+    dejit.execute();
     assert((dejit.state.regs[0] == 3) && "Unexpected value");
 }
 
