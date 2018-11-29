@@ -38,6 +38,7 @@ typedef std::uint32_t            (*cp_read_func)(void*, std::uint32_t);
 typedef void                     (*cp_write_func)(void*, std::uint32_t, std::uint32_t);
 
 typedef void                     (*dummy_func)(void*);
+typedef read_mem32_func            read_code32_func;
 
 struct location_descriptor
 {
@@ -62,6 +63,10 @@ struct jit_callback
     write_mem8_func         write_mem8;
     write_mem16_func        write_mem16;
     write_mem32_func        write_mem32;
+
+    // Called when translating instructions, will fallback to read_mem32
+    // if this is not supply
+    read_code32_func        read_code32;
 
     cp_read_func            cp_read;
     cp_write_func           cp_write;
@@ -128,8 +133,8 @@ public:
     void flush_reg(arm_recompile_block *block, ArmGen::ARMReg guest_reg);
 
     void spill_lock(ArmGen::ARMReg guest_reg);
-
     void release_spill_lock(ArmGen::ARMReg guest_reg);
+
     void release_all_spill_lock();
 };
 
@@ -210,8 +215,8 @@ public:
 
     void init();
 
-    ArmGen::ARMReg get_next_reg_from_cs(cs_arm *arm);
-    ArmGen::Operand2 get_next_op_from_cs(cs_arm *arm);
+    ArmGen::ARMReg get_next_reg_from_cs(cs_arm *arm, bool increase = true);
+    ArmGen::Operand2 get_next_op_from_cs(cs_arm *arm, bool increase = true);
 
     void recompile_single_instruction(arm_recompiler *recompiler);
     void recompile(arm_recompiler *recompiler);
@@ -246,6 +251,8 @@ struct jit_state
 {
     std::uint32_t cycles_to_run;
     std::uint32_t cycles_left;
+
+    bool          should_stop;
 
     std::uint32_t           regs[16];
     std::uint32_t           cpsr;
@@ -371,7 +378,9 @@ struct arm_recompiler
     void end_valid_condition_block(CCFlags cond);
 
     void gen_block_link();
+
     void gen_arm32_b(CCFlags flag, ArmGen::Operand2 op);
+    void gen_arm32_bl(CCFlags flag, ArmGen::Operand2 op);
 
     void begin_gen_cpsr_update();
     void end_gen_cpsr_update();
@@ -404,14 +413,21 @@ struct arm_recompiler
     void gen_arm32_smull(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg4);
     void gen_arm32_smlal(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg4);
 
-    void gen_arm32_str(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
-    void gen_arm32_ldr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false, bool write_back = false);
+    void gen_arm32_str(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, 
+        bool write_back = false, bool post_index = false);
+    void gen_arm32_ldr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false,
+        bool write_back = false, bool post_index = false);
     
-    void gen_arm32_strb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
-    void gen_arm32_ldrb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false, bool write_back = false);
+    void gen_arm32_strb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, 
+        bool write_back = false, bool post_index = false);
+    void gen_arm32_ldrb(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op, bool subtract = false, 
+        bool write_back = false, bool post_index = false);
     
-    void gen_arm32_strh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
-    void gen_arm32_ldrh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, bool write_back = false);
+    void gen_arm32_strh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
+        bool write_back = false, bool post_index = false);
+
+    void gen_arm32_ldrh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, 
+        bool write_back = false, bool post_index = false);
 
     void gen_memory_write(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
         bool write_back = false, bool is_post_index = false);
@@ -439,15 +455,9 @@ public:
 
     explicit jit(jit_callback callback);
 
-    void execute()
-    {
-        block.do_run_code(&state);
-    }
-
-    bool stop()
-    {
-        return true;
-    }
+    void execute();
+    bool stop();
+    void reset();
 };
 
 }

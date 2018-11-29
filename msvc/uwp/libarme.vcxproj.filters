@@ -28,36 +28,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMDisassembler.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMInstPrinter.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMMapping.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMModule.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\cs.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\MCInst.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\MCInstrDesc.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\MCRegisterInfo.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\SStream.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\external\capstone\utils.c">
-      <Filter>External\Capstone\Source</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\src\ARMCPUDetect.cpp">
       <Filter>Lib\Source</Filter>
     </ClCompile>
@@ -76,8 +46,38 @@
     <ClCompile Include="..\..\src\StringUtils.cpp">
       <Filter>Lib\Source</Filter>
     </ClCompile>
-    <ClCompile Include="..\uwp\Miscs.cpp">
+    <ClCompile Include="..\..\src\Miscs.cpp">
       <Filter>Lib\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMInstPrinter.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMDisassembler.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMMapping.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\arch\ARM\ARMModule.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\cs.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\MCInst.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\MCInstrDesc.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\MCRegisterInfo.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\SStream.cpp">
+      <Filter>External\Capstone\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\external\capstone\utils.cpp">
+      <Filter>External\Capstone\Source</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -4,6 +4,7 @@
 #define CAPSTONE_USE_SYS_DYN_MEM
 
 #include <capstone/capstone.h>
+#include <capstone/arm.h>
 
 using namespace ArmGen;
 
@@ -37,7 +38,8 @@ arm_analyst::arm_analyst(jit_callback &callback)
 
 cs_insn *arm_analyst::disassemble_instructions(const address addr, bool thumb)
 {
-    std::uint32_t op = callback.read_mem32(callback.userdata, addr);
+    std::uint32_t op = callback.read_code32 ? callback.read_code32(callback.userdata, addr)
+        : callback.read_mem32(callback.userdata, addr);
     auto count = cs_disasm(handle, reinterpret_cast<const std::uint8_t*>(&op), thumb ? 2 : 4, addr, 1,
         &insn);
 
@@ -398,12 +400,8 @@ static CCFlags  cs_cc_to_jit_cc(arm_cc cc)
     UNREACHABLE("No known CC flags");
 }
 
-static ARMReg cs_arm_op_to_reg(cs_arm_op &op)
+static ARMReg cs_arm_reg_to_reg(arm_reg reg)
 {
-    assert((op.type == ARM_OP_REG || op.type == ARM_OP_MEM) && "The Capstone operand is not an register!");
-
-    arm_reg reg = (op.type == ARM_OP_MEM) ? op.mem.base : static_cast<arm_reg>(op.reg);
-
     switch (reg)
     {
     case ARM_REG_SP:
@@ -426,6 +424,14 @@ static ARMReg cs_arm_op_to_reg(cs_arm_op &op)
     }
 
     return static_cast<ARMReg>((reg - ARM_REG_R0) + ARMReg::R0);
+}
+
+static ARMReg cs_arm_op_to_reg(cs_arm_op &op)
+{
+    assert((op.type == ARM_OP_REG || op.type == ARM_OP_MEM) && "The Capstone operand is not an register!");
+
+    arm_reg reg = (op.type == ARM_OP_MEM) ? op.mem.base : static_cast<arm_reg>(op.reg);
+    return cs_arm_reg_to_reg(reg);
 }
 
 static Operand2 cs_arm_op_to_operand2(cs_arm_op &op)
@@ -512,24 +518,24 @@ void arm_instruction_visitor::init()
     cs_option(handler, CS_OPT_DETAIL, CS_OPT_ON);
 }
 
-ARMReg arm_instruction_visitor::get_next_reg_from_cs(cs_arm *arm)
+ARMReg arm_instruction_visitor::get_next_reg_from_cs(cs_arm *arm, bool increase)
 {
     if (arm->op_count <= op_counter)
     {
         assert(false && "No more operand available to create a register");
     }
 
-    return cs_arm_op_to_reg(arm->operands[op_counter++]);
+    return cs_arm_op_to_reg(arm->operands[increase ? op_counter++ : op_counter]);
 }
 
-Operand2 arm_instruction_visitor::get_next_op_from_cs(cs_arm *arm)
+Operand2 arm_instruction_visitor::get_next_op_from_cs(cs_arm *arm, bool increase)
 {
     if (arm->op_count <= op_counter)
     {
         return Operand2();
     }
 
-    return cs_arm_op_to_operand2(arm->operands[op_counter++]);
+    return cs_arm_op_to_operand2(arm->operands[increase ? op_counter++ : op_counter]);
 }
 
 void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recompiler)
@@ -557,8 +563,12 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 
     case ARM_INS_ADD: 
     {
-        recompiler->gen_arm32_add(get_next_reg_from_cs(arm), get_next_reg_from_cs(arm),
-            get_next_op_from_cs(arm));
+        // MSVC ARM code generation sometimes is buggy, arguments constructing is called backwards.
+        auto dest = get_next_reg_from_cs(arm);
+        auto source = get_next_reg_from_cs(arm);
+        auto source2 = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_add(dest, source, source2);
 
         break;
     }
@@ -571,8 +581,12 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 
     case ARM_INS_SUB:
     {
-        recompiler->gen_arm32_sub(get_next_reg_from_cs(arm), get_next_reg_from_cs(arm),
-            get_next_reg_from_cs(arm));
+        // MSVC ARM code generation sometimes is buggy, arguments constructing is called backwards.
+        auto dest = get_next_reg_from_cs(arm);
+        auto source = get_next_reg_from_cs(arm);
+        auto source2 = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_sub(dest, source, source2);
             
         break;
     }
@@ -587,19 +601,26 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {
         recompiler->gen_arm32_b(cs_cc_to_jit_cc(arm->cc), get_next_op_from_cs(arm));
         should_break = true;
+        break;
+    }
 
+    case ARM_INS_BL:
+    {
+        recompiler->gen_arm32_bl(cs_cc_to_jit_cc(arm->cc), get_next_op_from_cs(arm));
+        should_break = true;
         break;
     }
 
 #define DECLARE_ALU_BASE(insn, func_name)      \
     case ARM_INS_##insn:            \
     {                               \
-        auto r1 = get_next_reg_from_cs(arm);        \
-        auto r2 = get_next_reg_from_cs(arm);        \
-        recompiler->gen_arm32_##func_name(r1, r2,           \
-            arm->operands[op_counter - 1].mem.disp, arm->operands[op_counter - 1].subtracted, arm->writeback   \
-            );                                                           \
-        break;                                                                                              \
+        auto r1 = get_next_reg_from_cs(arm);                    \
+        auto r2 = get_next_reg_from_cs(arm, false);             \
+        auto op = arm->operands[op_counter].mem.index != arm_reg::ARM_REG_INVALID ? Operand2(cs_arm_reg_to_reg(arm->operands[op_counter].mem.index), \
+            ShiftType::ST_LSL, arm->operands[op_counter].mem.lshift) : arm->operands[op_counter].mem.disp;                              \
+        recompiler->gen_arm32_ldr(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback                                      \
+            , arm->operands[op_counter].imm & (2 << 9) ? true : false);                                                                 \
+        break;                                                                                                                          \
     }
 
     DECLARE_ALU_BASE(STR, str)
@@ -979,6 +1000,20 @@ void arm_recompiler::gen_arm32_b(CCFlags flag, Operand2 op)
     end_valid_condition_block(flag);
 }
 
+void arm_recompiler::gen_arm32_bl(CCFlags flag, ArmGen::Operand2 op)
+{
+    begin_valid_condition_block(flag);
+
+    int adv = op.Imm24() >> 6;
+    auto new_des = visitor.get_location_descriptor().advance(adv);
+
+    block->MOV(ARMReg::R10, visitor.get_current_visiting_pc() + 4);
+    set_pc(new_des.pc);
+
+    gen_block_link();
+    end_valid_condition_block(flag);
+}
+
 void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
 {
     if (reg2 == ARMReg::R15) 
@@ -996,6 +1031,21 @@ void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
         {
             assert(false, "R15 is with another register!");
         }
+    }
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(reg2);
+        allocator.spill_lock(static_cast<ARMReg>(op.Rm()));
+
+        ARMReg source1 = remap_arm_reg(reg2);
+        ARMReg source2 = remap_arm_reg(static_cast<ARMReg>(op.Rm()));
+
+        allocator.release_all_spill_lock();
+
+        block->ADD(remap_arm_reg(reg1), source1, source2);
+
+        return;
     }
 
     block->ADD(remap_arm_reg(reg1), remap_arm_reg(reg2), op);
@@ -1020,21 +1070,26 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
     }
 
     // Can remap them seperately. They has different usage
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(reg2);
+        allocator.spill_lock(static_cast<ARMReg>(op.Rm()));
+
+        ARMReg source1 = remap_arm_reg(reg2);
+        ARMReg source2 = remap_arm_reg(static_cast<ARMReg>(op.Rm()));
+
+        allocator.release_all_spill_lock();
+        block->SUB(remap_arm_reg(reg1), source1, source2);
+
+        return;
+    }
+
     block->SUB(remap_arm_reg(reg1), remap_arm_reg(reg2), op);
 }
 
 void arm_recompiler::gen_arm32_cmp(ARMReg reg1, Operand2 op)
 {
     block->CMP(remap_arm_reg(reg1), remap_operand2(op));
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-    
-    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_cmn(ARMReg reg1, Operand2 op)
@@ -1076,9 +1131,14 @@ void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
 void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Operand2 op, bool subtract, bool write_back,
     bool post_indexed)
 {
-    assert(op.GetType() != OpType::TYPE_REG);
-
     ARMReg mapped_source_reg = remap_arm_reg(source);
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(base);
+        allocator.spill_lock(static_cast<ARMReg>(op.Rm()));
+    }
+
     ARMReg mapped_base_reg = remap_arm_reg(base);
 
     block->PUSH(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
@@ -1104,11 +1164,11 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
             // Next, add them with base. The value will stay in R4
             if (subtract)
             {
-                block->SUB(ARMReg::R4, ARMReg::R4, op);
+                block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
             else
             {
-                block->ADD(ARMReg::R4, ARMReg::R4, op);
+                block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
         }
     }
@@ -1129,15 +1189,20 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
             // Next, add them with base. The value will stay in R4
             if (subtract)
             {
-                block->SUB(ARMReg::R4, ARMReg::R4, op);
+                block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
             else
             {
-                block->ADD(ARMReg::R4, ARMReg::R4, op);
+                block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
         }
 
         block->MOV(mapped_base_reg, ARMReg::R4);
+    }
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.release_all_spill_lock();
     }
 
     block->POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
@@ -1147,9 +1212,14 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
 void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Operand2 op, bool subtract, bool write_back,
     bool post_indexed)
 {
-    assert(op.GetType() != OpType::TYPE_REG);
-
     ARMReg mapped_dest_reg = remap_arm_reg(dest);
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(base);
+        allocator.spill_lock(static_cast<ARMReg>(op.Rm()));
+    }
+
     ARMReg mapped_base_reg = remap_arm_reg(base);
 
     // Using local variable R4. Make sure we doesn't push this if the mapped dest is r4,
@@ -1182,11 +1252,11 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
             // Next, add them with base. The value will stay in R4
             if (subtract)
             {
-                block->SUB(ARMReg::R4, ARMReg::R4, op);
+                block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
             else
             {
-                block->ADD(ARMReg::R4, ARMReg::R4, op);
+                block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
         }
     }
@@ -1219,19 +1289,23 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
             // Next, add them with base. The value will stay in R4
             if (subtract)
             {
-                block->SUB(ARMReg::R4, ARMReg::R4, op);
+                block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
             else
             {
-                block->ADD(ARMReg::R4, ARMReg::R4, op);
+                block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
             }
         }
 
         block->MOV(mapped_base_reg, ARMReg::R4);
     }
 
-    // Should be in order
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.release_all_spill_lock();
+    }
 
+    // Should be in order
     block->POP(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
 
     if (mapped_dest_reg != ARMReg::R4)
@@ -1240,34 +1314,34 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     }
 }
 
-void arm_recompiler::gen_arm32_str(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
+void arm_recompiler::gen_arm32_str(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.write_mem32, reg1, reg2, base, subtract, write_back);
+    gen_memory_write(callback.write_mem32, reg1, reg2, base, subtract, write_back, post_index);
 }
 
-void arm_recompiler::gen_arm32_ldr(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
+void arm_recompiler::gen_arm32_ldr(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_read(callback.read_mem32, reg1, reg2, base, subtract, write_back);
+    gen_memory_read(callback.read_mem32, reg1, reg2, base, subtract, write_back, post_index);
 }
 
-void arm_recompiler::gen_arm32_strb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
+void arm_recompiler::gen_arm32_strb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.write_mem8, reg1, reg2, base, subtract, write_back);
+    gen_memory_write(callback.write_mem8, reg1, reg2, base, subtract, write_back, post_index);
 }
 
-void arm_recompiler::gen_arm32_ldrb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
+void arm_recompiler::gen_arm32_ldrb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.read_mem8, reg1, reg2, base, subtract, write_back);
+    gen_memory_write(callback.read_mem8, reg1, reg2, base, subtract, write_back, post_index);
 }
 
-void arm_recompiler::gen_arm32_strh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
+void arm_recompiler::gen_arm32_strh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.write_mem16, reg1, reg2, base, subtract, write_back);
+    gen_memory_write(callback.write_mem16, reg1, reg2, base, subtract, write_back, post_index);
 }
 
-void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back)
+void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.read_mem16, reg1, reg2, base, subtract, write_back);
+    gen_memory_write(callback.read_mem16, reg1, reg2, base, subtract, write_back, post_index);
 }
 
 void arm_recompiler::gen_block_link()
@@ -1442,6 +1516,28 @@ code_ptr jit::get_next_block_addr(void *userdata)
     des.cpsr = j->state.cpsr;
 
     return j->recompiler.get_next_block(des).entry_point;
+}
+
+void jit::execute()
+{
+    state.should_stop = false;
+    block.do_run_code(&state);
+}
+
+bool jit::stop()
+{
+    state.should_stop = true;
+    return true;
+}
+
+void jit::reset()
+{
+    for (auto i = 0; i < 16; i++)
+    {
+        state.regs[i] = 0;
+    }
+
+    state.cpsr = 0xD3;
 }
 
 }
