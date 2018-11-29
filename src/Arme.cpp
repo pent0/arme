@@ -551,13 +551,19 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {
     case ARM_INS_MOV: 
     {
-        recompiler->gen_arm32_mov(get_next_reg_from_cs(arm), get_next_op_from_cs(arm));
+        auto dest = get_next_reg_from_cs(arm);
+        auto op = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_mov(dest, op);
         break;
     }
 
     case ARM_INS_MVN:
     {
-        recompiler->gen_arm32_mvn(get_next_reg_from_cs(arm), get_next_op_from_cs(arm));
+        auto dest = get_next_reg_from_cs(arm);
+        auto op = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_mvn(dest, op);
         break;
     }
 
@@ -575,7 +581,10 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 
     case ARM_INS_TST:
     {
-        recompiler->gen_arm32_tst(get_next_reg_from_cs(arm), get_next_op_from_cs(arm));
+        auto dest = get_next_reg_from_cs(arm);
+        auto op = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_tst(dest, op);
         break;
     }
 
@@ -632,7 +641,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 
     default:
     {
-        assert(false, "Unimplemented instructions!");
+        assert(false && "Unimplemented instructions!");
         break;
     }
     }
