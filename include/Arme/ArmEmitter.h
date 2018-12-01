@@ -205,6 +205,12 @@ public:
 			return 0;
 		}
 	}
+
+    u32 GetRawValue() const
+    {
+        return Value;
+    }
+
 	u32 IMMSR() // IMM shifted register
 	{
 		_assert_msg_(JIT, Type == TYPE_IMMSREG, "IMMSR must be imm shifted register");

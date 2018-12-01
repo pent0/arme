@@ -34,8 +34,8 @@ typedef void            (*unhandled_instruction_func)(void*);
 typedef std::uint32_t   (*get_remaining_cycles_func)(void*);
 typedef void            (*add_cycles_func)(void*, std::uint32_t);
 
-typedef std::uint32_t            (*cp_read_func)(void*, std::uint32_t);
-typedef void                     (*cp_write_func)(void*, std::uint32_t, std::uint32_t);
+typedef std::uint32_t            (*cp_read_func)(void*, std::uint8_t, std::uint32_t);
+typedef void                     (*cp_write_func)(void*, std::uint8_t, std::uint32_t, std::uint32_t);
 
 typedef void                     (*dummy_func)(void*);
 typedef read_mem32_func            read_code32_func;
@@ -182,6 +182,9 @@ private:
     std::uint32_t   cycles_count;
     std::uint32_t   cycles_count_since_last_cond;
 
+    std::uint32_t   crr_inst;
+    bool            is_alu_group;
+
     location_descriptor loc;
 
     bool                t_reg;
@@ -208,6 +211,11 @@ public:
         return *insn;
     }
 
+    std::uint32_t get_current_instruction_binary()
+    {
+        return crr_inst;
+    }
+
     location_descriptor &get_location_descriptor()
     {
         return loc;
@@ -226,7 +234,7 @@ public:
 
     void set_pc(address pc)
     {
-        loc.pc = (pc & 1) ? pc - 1 : pc;
+        loc.pc = (pc & 1) ? pc - 1 + 4 : pc + 8;
         t_reg = (pc & 1) ? true : false;
     }
 
@@ -241,6 +249,11 @@ public:
     }
 
     std::uint32_t get_current_visiting_pc() const
+    {
+        return loc.pc - (t_reg ? 4 : 8);
+    }
+
+    std::uint32_t get_current_pc() const
     {
         return loc.pc;
     }
@@ -261,6 +274,8 @@ struct jit_state
     std::uint32_t           abt[3];
     std::uint32_t           irq[3];
     std::uint32_t           und[3];
+
+    std::uint32_t           gar[5];
 };
 
 struct jit_state_information
@@ -379,16 +394,29 @@ struct arm_recompiler
 
     void gen_block_link();
 
-    void gen_arm32_b(CCFlags flag, ArmGen::Operand2 op);
-    void gen_arm32_bl(CCFlags flag, ArmGen::Operand2 op);
+    void gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t op1,
+        ArmGen::ARMReg rd, const std::uint8_t crn, const std::uint8_t crm,
+        const std::uint8_t op2);
+
+    void gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t op1,
+        ArmGen::ARMReg rs, const std::uint8_t crn, const std::uint8_t crm,
+        const std::uint8_t op2);
+
+    void gen_arm32_msr(ArmGen::Operand2 op);
+
+    void gen_arm32_b(address addr);
+    void gen_arm32_bl(address addr);
+
+    void gen_arm32_bx(ArmGen::Operand2 op);
+    void gen_arm32_blx(ArmGen::Operand2 op);
 
     void begin_gen_cpsr_update();
     void end_gen_cpsr_update();
 
     void save_pc_from_visitor();
 
-    void set_pc(ArmGen::ARMReg reg);
-    void set_pc(const std::uint32_t off);
+    void set_pc(ArmGen::ARMReg reg, bool exchange = false);
+    void set_pc(const std::uint32_t off, bool exchange = false);
 
     void gen_cpsr_update_c_flag();
     void gen_cpsr_update_z_flag();
@@ -403,6 +431,9 @@ struct arm_recompiler
     void gen_arm32_sub(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op);
     void gen_arm32_cmp(ArmGen::ARMReg reg1, ArmGen::Operand2 op);
     void gen_arm32_cmn(ArmGen::ARMReg reg1, ArmGen::Operand2 op);
+    void gen_arm32_bic(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op);
+    void gen_arm32_and(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op);
+    void gen_arm32_orr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op);
 
     // R15 can't be used
     void gen_arm32_mul(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3);
@@ -428,6 +459,12 @@ struct arm_recompiler
 
     void gen_arm32_ldrh(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, 
         bool write_back = false, bool post_index = false);
+
+    void gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, const int count, bool ascending = false, bool inc_before = true,
+        bool write_back = false);
+
+    void gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, const int count, bool ascending = false, bool inc_before = true,
+        bool write_back = false);
 
     void gen_memory_write(void *func, ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false,
         bool write_back = false, bool is_post_index = false);

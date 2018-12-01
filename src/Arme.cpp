@@ -6,6 +6,12 @@
 #include <capstone/capstone.h>
 #include <capstone/arm.h>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
+#include <string>
+
 using namespace ArmGen;
 
 namespace arme
@@ -14,6 +20,29 @@ namespace arme
 static const ARMReg JIT_STATE_REG = ARMReg::R8;
 
 #define SIGNEX(v, sb) ((v) | (((v) & (1 << (sb))) ? ~((1 << (sb))-1) : 0))
+#define ROL(n, i) ((n << i) | (n >> (32 - i))) >> 0
+#define ROR(n, i) ((n >> i) | (n << (32 - i))) >> 0
+
+static Operand2 encode_imm(std::uint32_t val)
+{
+    if (val > 0xFF)
+    {
+        //Operand2(val & 0xFF, (val >> 8) & 0xF) : val;
+        for (int i = 0; i < 16; i++)
+        {
+            auto m = ROL(val, i * 2);
+            if (m < 256)
+            {
+                val = (i << 8) | m;
+                return Operand2(val & 0xFF, (val >> 8) & 0xF);
+            }
+        }
+
+        // Fallthrough
+    }
+
+    return val;
+}
 
 #pragma region ANALYST
 
@@ -155,8 +184,7 @@ void arm_register_allocator::flush_reg(arm_recompile_block *block, ArmGen::ARMRe
     ARMReg host_reg = guest_map_regs[guest_reg].host_reg;
 
     // Hey, we got the host reg here, let's move it to jit state corresponding register
-    block->STR(host_reg, JIT_STATE_REG, offsetof(jit_state, regs) + (guest_reg - R0) * sizeof(std::uint32_t),
-        true);
+    block->STR(host_reg, JIT_STATE_REG, offsetof(jit_state, regs) + (guest_reg - R0) * sizeof(std::uint32_t));
 
     // Now that we store it, let's discard the register
     discard_reg(guest_reg);
@@ -249,6 +277,12 @@ bool arm_register_allocator::allocate_free_spot(arm_recompile_block *block, ArmG
 ArmGen::ARMReg  arm_register_allocator::map_reg(arm_recompile_block *block,
     ArmGen::ARMReg guest_reg, address addr, bool thumb)
 {
+    // Stub return PC with PC
+    if (guest_reg == R_PC)
+    {
+        return ARMReg::R_PC;
+    }
+
     if (guest_reg == R_SP)
     {
         return ARMReg::R11;
@@ -495,7 +529,7 @@ static Operand2 cs_arm_op_to_operand2(cs_arm_op &op)
 
     case ARM_OP_IMM:
     {
-        return op.imm;
+        return encode_imm(op.imm);
     }
 
     default:
@@ -540,16 +574,28 @@ Operand2 arm_instruction_visitor::get_next_op_from_cs(cs_arm *arm, bool increase
 
 void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recompiler)
 {
-    auto insn = analyst->disassemble_instructions(loc.pc, t_reg);
+    auto insn = analyst->disassemble_instructions(loc.pc - (t_reg ? 4 : 8), t_reg);
+    crr_inst = callback.read_code32 ? callback.read_code32(callback.userdata, loc.pc - (t_reg ? 4 : 8))
+        : callback.read_mem32(callback.userdata, loc.pc);
+
+    //printf("[0x%08x] %s %s\n", insn->address, insn->mnemonic, insn->op_str);
 
     cs_detail *detail = insn->detail;
     cs_arm *arm = &(detail->arm);
 
     op_counter = 0;
 
+    CCFlags ccflag = cs_cc_to_jit_cc(arm->cc);
+
+    if (!t_reg)
+    {
+        // Do condition check if ARM. AL flag will returns imm
+        recompiler->begin_valid_condition_block(ccflag);
+    }
+
     switch (insn->id)
     {
-    case ARM_INS_MOV: 
+    case ARM_INS_MOV:
     {
         auto dest = get_next_reg_from_cs(arm);
         auto op = get_next_op_from_cs(arm);
@@ -567,15 +613,28 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         break;
     }
 
-    case ARM_INS_ADD: 
+#define DECLARE_ALU_CALC(name, func_name)  \
+    case ARM_INS_##name:                       \
+    {                                       \
+        auto dest = get_next_reg_from_cs(arm);  \
+        auto source = get_next_reg_from_cs(arm);    \
+        auto source2 = get_next_op_from_cs(arm);    \
+        recompiler->gen_arm32_##func_name(dest, source, source2);   \
+        break;          \
+    }
+
+    DECLARE_ALU_CALC(ADD, add)
+    DECLARE_ALU_CALC(SUB, sub)
+    DECLARE_ALU_CALC(AND, and)
+    DECLARE_ALU_CALC(ORR, orr)
+    DECLARE_ALU_CALC(BIC, bic)
+
+    case ARM_INS_MSR:
     {
-        // MSVC ARM code generation sometimes is buggy, arguments constructing is called backwards.
-        auto dest = get_next_reg_from_cs(arm);
-        auto source = get_next_reg_from_cs(arm);
-        auto source2 = get_next_op_from_cs(arm);
+        // Skip through op1
+        op_counter++;
 
-        recompiler->gen_arm32_add(dest, source, source2);
-
+        recompiler->gen_arm32_msr(get_next_op_from_cs(arm));
         break;
     }
 
@@ -588,35 +647,65 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         break;
     }
 
-    case ARM_INS_SUB:
-    {
-        // MSVC ARM code generation sometimes is buggy, arguments constructing is called backwards.
-        auto dest = get_next_reg_from_cs(arm);
-        auto source = get_next_reg_from_cs(arm);
-        auto source2 = get_next_op_from_cs(arm);
-
-        recompiler->gen_arm32_sub(dest, source, source2);
-            
-        break;
-    }
-
     case ARM_INS_CMP:
     {
         recompiler->gen_arm32_cmp(get_next_reg_from_cs(arm), get_next_reg_from_cs(arm));
         break;
     }
 
-    case ARM_INS_B: 
+    case ARM_INS_B:
     {
-        recompiler->gen_arm32_b(cs_cc_to_jit_cc(arm->cc), get_next_op_from_cs(arm));
+        // Capstone disassemble imm as address
+        recompiler->gen_arm32_b(arm->operands[op_counter].imm);
+        should_break = true;
+        break;
+    }
+
+    case ARM_INS_BX:
+    {
+        // Capstone disassemble imm as address
+        recompiler->gen_arm32_bx(get_next_op_from_cs(arm));
         should_break = true;
         break;
     }
 
     case ARM_INS_BL:
     {
-        recompiler->gen_arm32_bl(cs_cc_to_jit_cc(arm->cc), get_next_op_from_cs(arm));
+        recompiler->gen_arm32_bl(arm->operands[op_counter].imm);
         should_break = true;
+        break;
+    }
+
+    case ARM_INS_BLX:
+    {
+        recompiler->gen_arm32_blx(get_next_op_from_cs(arm));
+        should_break = true;
+        break;
+    }
+
+    case ARM_INS_MRC:
+    {
+        std::uint8_t cp = arm->operands[op_counter++].imm;
+        std::uint8_t op1 = arm->operands[op_counter++].imm;
+        ARMReg rd = cs_arm_reg_to_reg(static_cast<arm_reg>(arm->operands[op_counter++].reg));
+        std::uint8_t crn = arm->operands[op_counter++].imm;
+        std::uint8_t crm = arm->operands[op_counter++].imm;
+        std::uint8_t op2 = arm->operands[op_counter++].imm;
+
+        recompiler->gen_arm32_mrc(cp, op1, rd, crn, crm, op2);
+        break;
+    }
+
+    case ARM_INS_MCR:
+    {
+        std::uint8_t cp = arm->operands[op_counter++].imm;
+        std::uint8_t op1 = arm->operands[op_counter++].imm;
+        ARMReg rd = cs_arm_reg_to_reg(static_cast<arm_reg>(arm->operands[op_counter++].reg));
+        std::uint8_t crn = arm->operands[op_counter++].imm;
+        std::uint8_t crm = arm->operands[op_counter++].imm;
+        std::uint8_t op2 = arm->operands[op_counter++].imm;
+
+        recompiler->gen_arm32_mcr(cp, op1, rd, crn, crm, op2);
         break;
     }
 
@@ -626,11 +715,47 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         auto r1 = get_next_reg_from_cs(arm);                    \
         auto r2 = get_next_reg_from_cs(arm, false);             \
         auto op = arm->operands[op_counter].mem.index != arm_reg::ARM_REG_INVALID ? Operand2(cs_arm_reg_to_reg(arm->operands[op_counter].mem.index), \
-            ShiftType::ST_LSL, arm->operands[op_counter].mem.lshift) : arm->operands[op_counter].mem.disp;                              \
-        recompiler->gen_arm32_ldr(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback                                      \
+            ShiftType::ST_LSL, arm->operands[op_counter].mem.lshift) : encode_imm(arm->operands[op_counter].mem.disp);                              \
+        recompiler->gen_arm32_##func_name(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback                                      \
             , arm->operands[op_counter].imm & (2 << 9) ? true : false);                                                                 \
         break;                                                                                                                          \
     }
+
+#define DECLARE_LDM_BASE(inst, ascending, inc_before)   \
+    case ARM_INS_##inst:                                            \
+    {                                                               \
+        auto base = get_next_reg_from_cs(arm);                      \
+        std::vector<ARMReg> receive_regs;                           \
+        for (int i = 1; i < arm->op_count; i++)                     \
+        {                                                           \
+            receive_regs.push_back(get_next_reg_from_cs(arm));      \
+        }                                                           \
+        recompiler->gen_arm32_ldm(base, &receive_regs[0], receive_regs.size(), ascending, inc_before, arm->writeback);   \
+        break;                                                                                                  \
+    }
+
+#define DECLARE_STM_BASE(inst, ascending, inc_before)   \
+    case ARM_INS_##inst:                                            \
+    {                                                               \
+        auto base = get_next_reg_from_cs(arm);                      \
+        std::vector<ARMReg> source_regs;                            \
+        for (int i = 1; i < arm->op_count; i++)                     \
+        {                                                           \
+            source_regs.push_back(get_next_reg_from_cs(arm));      \
+        }                                                                                                              \
+        recompiler->gen_arm32_stm(base, &source_regs[0], source_regs.size(), ascending, inc_before, arm->writeback);   \
+        break;                                                                                                         \
+    }
+
+    DECLARE_LDM_BASE(LDMDA, false, false)
+    DECLARE_LDM_BASE(LDMDB, false, true)
+    DECLARE_LDM_BASE(LDMIB, true, true)
+    DECLARE_LDM_BASE(LDM, true, false)
+
+    DECLARE_STM_BASE(STMIB, true, true)
+    DECLARE_STM_BASE(STM, true, false)
+    DECLARE_STM_BASE(STMDA, false, false)
+    DECLARE_STM_BASE(STMDB, false, true)
 
     DECLARE_ALU_BASE(STR, str)
     DECLARE_ALU_BASE(STRB, strb)
@@ -646,6 +771,11 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     }
     }
 
+    if (!t_reg)
+    {
+        recompiler->end_valid_condition_block(ccflag);
+    }
+    
     loc = loc.advance(insn->size);
 
     cycles_count++;
@@ -727,6 +857,145 @@ void arm_recompile_block::ARMABI_call_function_cc(void *func, std::uint32_t arg1
 
 #pragma endregion
 
+static void update_cpsr_mode(void *rawstate, std::uint8_t sysreg, std::uint32_t val, std::uint32_t mask)
+{
+    jit_state *state = reinterpret_cast<jit_state*>(rawstate);
+    std::uint32_t *psr = nullptr;
+
+    switch (sysreg)
+    {
+    case 0x0:
+    {
+        psr = &(state->cpsr);
+        break;
+    }
+
+    case 0x11:
+    {
+        psr = &(state->fiq[7]);
+        break;
+    }
+
+    case 0x12:
+    {
+        psr = &(state->irq[2]);
+        break;
+    }
+
+    case 0x13:
+    {
+        psr = &(state->svc[2]);
+        break;
+    }
+
+    case 0x17:
+    {
+        psr = &(state->abt[2]);
+        break;
+    }
+
+    case 0x1B:
+    {
+        psr = &(state->und[2]);
+        break;
+    }
+
+    default: 
+    {
+        assert(false);
+        break;
+    }
+    }
+
+    auto oldpsr = *psr;
+    *psr &= ~mask;
+    *psr |= (val & mask);
+
+    if (sysreg == 0)
+    {
+        u32 temp;
+        #define SWAP(a, b)  temp = a; a = b; b = temp;
+
+        switch (oldpsr & 0x1F)
+        {
+        case 0x11:
+            SWAP(state->regs[8], state->fiq[0]);
+            SWAP(state->regs[9], state->fiq[1]);
+            SWAP(state->regs[10], state->fiq[2]);
+            SWAP(state->regs[11], state->fiq[3]);
+            SWAP(state->regs[12], state->fiq[4]);
+            SWAP(state->regs[13], state->fiq[5]);
+            SWAP(state->regs[14], state->fiq[6]);
+            break;
+
+        case 0x12:
+            SWAP(state->regs[13], state->irq[0]);
+            SWAP(state->regs[14], state->irq[1]);
+            break;
+
+        case 0x13:
+            SWAP(state->regs[13], state->svc[0]);
+            SWAP(state->regs[14], state->svc[1]);
+            break;
+
+        case 0x17:
+            SWAP(state->regs[13], state->abt[0]);
+            SWAP(state->regs[14], state->abt[1]);
+            break;
+
+        case 0x1B:
+            SWAP(state->regs[13], state->und[0]);
+            SWAP(state->regs[14], state->und[1]);
+            break;
+
+        default:
+        {
+            assert(false);
+            break;
+        }
+        }
+
+        switch (state->cpsr & 0x1F)
+        {
+        case 0x11:
+            SWAP(state->regs[8], state->fiq[0]);
+            SWAP(state->regs[9], state->fiq[1]);
+            SWAP(state->regs[10], state->fiq[2]);
+            SWAP(state->regs[11], state->fiq[3]);
+            SWAP(state->regs[12], state->fiq[4]);
+            SWAP(state->regs[13], state->fiq[5]);
+            SWAP(state->regs[14], state->fiq[6]);
+            break;
+
+        case 0x12:
+            SWAP(state->regs[13], state->irq[0]);
+            SWAP(state->regs[14], state->irq[1]);
+            break;
+
+        case 0x13:
+            SWAP(state->regs[13], state->svc[0]);
+            SWAP(state->regs[14], state->svc[1]);
+            break;
+
+        case 0x17:
+            SWAP(state->regs[13], state->abt[0]);
+            SWAP(state->regs[14], state->abt[1]);
+            break;
+
+        case 0x1B:
+            SWAP(state->regs[13], state->und[0]);
+            SWAP(state->regs[14], state->und[1]);
+            break;
+
+        default:
+        {
+            assert(false);
+            break;
+        }
+        }
+    }
+}
+
 arm_recompiler::arm_recompiler(arm_analyst *analyst, jit_callback callback, arm_recompile_block &block)
     : block(&block), callback(callback), analyst(analyst), visitor(analyst, callback, 0), allocator(analyst)
 {
@@ -775,7 +1044,7 @@ Operand2 arm_recompiler::remap_operand2(Operand2 op)
 
         case ARMReg::R15:
         {
-            return visitor.get_current_visiting_pc();
+            return visitor.get_current_pc();
         }
 
         default:
@@ -833,95 +1102,266 @@ void arm_recompiler::flush()
     end_gen_cpsr_update();
 }
 
+void arm_recompiler::gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t op1,
+    ArmGen::ARMReg rs, const std::uint8_t crn, const std::uint8_t crm,
+    const std::uint8_t op2)
+{
+    ARMReg mapped_source = remap_arm_reg(rs);
+
+    block->PUSH(5, R0, R1, R2, R3, R14);
+    block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
+    block->MOVI2R(ARMReg::R2, (crn << 8) | (crn << 4) | op1);
+    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.cp_read));
+    block->MOVI2R(ARMReg::R1, coproc);
+    mapped_source != R3 ? block->MOV(ARMReg::R3, mapped_source) : 0;
+
+    block->BL(ARMReg::R14);
+
+    block->POP(5, R0, R1, R2, R3, R14);
+}
+
+void arm_recompiler::gen_arm32_msr(Operand2 op)
+{
+    u32 mask = 0;
+    u32 inst = visitor.get_current_instruction_binary();
+
+    if (inst & (1 << 16)) mask |= 0x000000FF;
+    if (inst & (1 << 17)) mask |= 0x0000FF00;
+    if (inst & (1 << 18)) mask |= 0x00FF0000;
+    if (inst & (1 << 19)) mask |= 0xFF000000;
+
+    if (!(inst & (1 << 22)))
+        mask &= 0xFFFFFFDF;
+
+    block->PUSH(5, R0, R1, R2, R3, R14); 
+    block->MOV(R2, remap_operand2(op));
+
+    block->MOVI2R(R3, mask);
+
+    block->AND(R0, R3, 0x1F);
+    block->CMP(R0, 0x10);
+
+    block->SetCC(CC_EQ);
+    block->AND(R3, R3, encode_imm(0xFFFFFF00));
+    block->SetCC(CC_AL);
+    
+    if (inst & (1 << 22)) 
+    {
+        block->LDR(R1, JIT_STATE_REG, offsetof(jit_state, cpsr));
+        block->AND(R1, R1, 0x1F);
+    }
+    else 
+    {
+        block->MOV(R1, 0);
+    }
+
+    block->MOV(R0, JIT_STATE_REG);
+    block->MOVI2R(R14, reinterpret_cast<u32>(update_cpsr_mode));
+
+    block->BL(R14);
+    block->POP(4, R0, R1, R2, R3, R14);
+}
+
+void arm_recompiler::gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t op1,
+    ArmGen::ARMReg rd, const std::uint8_t crn, const std::uint8_t crm,
+    const std::uint8_t op2)
+{
+    ARMReg dest_mapped = remap_arm_reg(rd);
+    
+    switch (dest_mapped)
+    {
+    case R0:
+        block->PUSH(3, R1, R2, R14);
+        break;
+
+    case R1:
+        block->PUSH(3, R0, R2, R14);
+        break;
+
+    case R2:
+        block->PUSH(3, R0, R1, R14);
+        break;
+
+    default:
+        block->PUSH(4, R0, R1, R2, R14);
+        break;
+    }
+
+    block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
+    block->MOVI2R(ARMReg::R2, (crn << 8) | (crn << 4) | op1);
+    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.cp_read));
+    block->MOVI2R(ARMReg::R1, coproc);
+
+    block->BL(ARMReg::R14);
+
+    if (rd == R_PC)
+    {
+        set_pc(R0);
+        gen_block_link();
+    }
+
+    else
+    {
+        dest_mapped != R0 ? block->MOV(dest_mapped, R0) : 0;
+    }
+
+    switch (dest_mapped)
+    {
+    case R0:
+        block->POP(3, R1, R2, R14);
+        break;
+
+    case R1:
+        block->POP(3, R0, R2, R14);
+        break;
+
+    case R2:
+        block->POP(3, R0, R1, R14);
+        break;
+
+    default:
+        block->POP(4, R0, R1, R2, R14);
+        break;
+    }
+}
+
 void arm_recompiler::save_pc_from_visitor()
 {
-    set_pc(visitor.get_current_visiting_pc());
+    set_pc(visitor.get_current_pc());
 }
 
-void arm_recompiler::set_pc(ArmGen::ARMReg reg)
+void arm_recompiler::set_pc(ArmGen::ARMReg reg, bool exchange)
 {
     block->STR(reg, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
+
+    if (exchange)
+    {
+        block->PUSH(2, R4, R5);
+        block->LDR(R5, JIT_STATE_REG, offsetof(jit_state, cpsr));
+
+        // Clear the thumb bit if there is one
+        block->BIC(R5, R5, 0x20);
+
+        block->AND(R4, reg, 1);
+        block->CMP(R4, 1);
+
+        block->SetCC(CC_EQ);
+        block->ORR(R5, R5, 0x20);
+        block->SetCC(CC_AL);
+
+        block->STR(R5, JIT_STATE_REG, offsetof(jit_state, cpsr));
+
+        block->POP(2, R4, R5);
+    }
 }
 
-void arm_recompiler::set_pc(const std::uint32_t off)
+void arm_recompiler::set_pc(const std::uint32_t off, bool exchange)
 {
     block->PUSH(1, ARMReg::R4);
     block->MOVI2R(ARMReg::R4, off);
+
+    if (exchange)
+    {
+        block->PUSH(1, R5);
+        block->LDR(R5, JIT_STATE_REG, offsetof(jit_state, cpsr));
+
+        // Clear the thumb bit if there is one
+        block->BIC(R5, R5, 0x20);
+
+        // If Thumb
+        if (off & 1)
+        {
+            block->ORR(R5, R5, 0x20);
+        }
+
+        block->STR(R5, JIT_STATE_REG, offsetof(jit_state, cpsr));
+        block->POP(1, R5);
+    }
+
     block->STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
     block->POP(1, ARMReg::R4);
 }
 
 void arm_recompiler::begin_gen_cpsr_update()
 {
-    block->PUSH(2, ARMReg::R4, ARMReg::R5);
+    block->PUSH(4, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7);
     block->LDR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
+    block->MOV(ARMReg::R6, ARMReg::R4);
 }
 
 void arm_recompiler::end_gen_cpsr_update()
 {
     block->STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
-    block->POP(2, ARMReg::R4, ARMReg::R5);
+    block->POP(4, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7);
 }
 
 void arm_recompiler::gen_cpsr_update_c_flag()
 {
     // Use this to clear bit 29
-    block->AND(ARMReg::R4, ARMReg::R4, 0xDFFFFFFF);
+    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 29));
 
     block->SetCC(CCFlags::CC_CS);
-    block->ORR(ARMReg::R4, ARMReg::R4, 1 << 29);
+    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 29));
     block->SetCC(CCFlags::CC_AL);
 }
 
 void arm_recompiler::gen_cpsr_update_z_flag()
 {
     // Use this to clear bit 30
-    block->AND(ARMReg::R4, ARMReg::R4, 0xBFFFFFFF);
+    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 30));
 
     // Z flag is set, we will ORR.
     block->SetCC(CCFlags::CC_EQ);
-    block->ORR(ARMReg::R4, ARMReg::R4, 1 << 30);
+    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 30));
     block->SetCC(CCFlags::CC_AL);
 }
 
 void arm_recompiler::gen_cpsr_update_n_flag()
 {
     // Use this to clear bit 31
-    block->AND(ARMReg::R4, ARMReg::R4, 0x7FFFFFFF);
+    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 31));
 
     // N flag is set (negative), we will ORR.
     block->SetCC(CCFlags::CC_MI);
-    block->ORR(ARMReg::R4, ARMReg::R4, 1 << 31);
+    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 31));
     block->SetCC(CCFlags::CC_AL);
 }
 
 void arm_recompiler::gen_cpsr_update_v_flag()
 {
     // Use this to clear bit 28
-    block->AND(ARMReg::R4, ARMReg::R4, 0xEFFFFFFF);
+    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 28));
 
     // V flag is set (overflow), we will ORR.
     block->SetCC(CCFlags::CC_VS);
-    block->ORR(ARMReg::R4, ARMReg::R4, 1 << 28);
+    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 28));
     block->SetCC(CCFlags::CC_AL);
 }
 
 void arm_recompiler::gen_arm32_mov(ARMReg reg, Operand2 op)
 {
-    block->MOV(reg, remap_operand2(op));
+    auto new_dest_reg = remap_arm_reg(reg);
+    auto new_op = remap_operand2(op);
+
+    block->MOV(new_dest_reg, new_op);
 }
 
 void arm_recompiler::gen_arm32_mvn(ARMReg reg, Operand2 op)
 {
-    block->MVN(reg, remap_operand2(op));
+    auto new_dest_reg = remap_arm_reg(reg);
+    block->MVN(new_dest_reg, remap_operand2(op));
 }
 
 void arm_recompiler::gen_arm32_tst(ARMReg reg, Operand2 op)
 {
+    auto new_dest_reg = remap_arm_reg(reg);
+    block->TST(new_dest_reg, remap_operand2(op));
 }
 
 void arm_recompiler::gen_arm32_teq(ARMReg reg, Operand2 op)
 {
+    auto new_dest_reg = remap_arm_reg(reg);
+    block->TEQ(new_dest_reg, remap_operand2(op));
 }
 
 void arm_recompiler::begin_valid_condition_block(CCFlags cond)
@@ -961,6 +1401,18 @@ void arm_recompiler::end_valid_condition_block(CCFlags cond)
         break;
     }
 
+    case CCFlags::CC_PL:
+    {
+        block->B_CC(CCFlags::CC_MI, crr_addr);
+        break;
+    }
+
+    case CCFlags::CC_MI:
+    {
+        block->B_CC(CCFlags::CC_PL, crr_addr);
+        break;
+    }
+
     case CCFlags::CC_GT:
     {
         block->B_CC(CCFlags::CC_LE, crr_addr);
@@ -996,31 +1448,57 @@ void arm_recompiler::end_valid_condition_block(CCFlags cond)
     save_pc_from_visitor();
 }
 
-void arm_recompiler::gen_arm32_b(CCFlags flag, Operand2 op)
-{
-    begin_valid_condition_block(flag);
-    
-    int adv = op.Imm24() >> 6;
-    auto new_des = visitor.get_location_descriptor().advance(adv);
-
-    set_pc(new_des.pc);
-    
+void arm_recompiler::gen_arm32_b(address addr)
+{   
+    set_pc(addr);
     gen_block_link();
-    end_valid_condition_block(flag);
 }
 
-void arm_recompiler::gen_arm32_bl(CCFlags flag, ArmGen::Operand2 op)
+void arm_recompiler::gen_arm32_bl(address addr)
 {
-    begin_valid_condition_block(flag);
+    auto ret_addr = visitor.get_current_visiting_pc() +
+        (visitor.is_thumb() ? 1 : 4);
+    
+    // Only increase 1 if the current is thumb.
+    block->MOVI2R(remap_arm_reg(R_LR), ret_addr);
 
-    int adv = op.Imm24() >> 6;
-    auto new_des = visitor.get_location_descriptor().advance(adv);
-
-    block->MOV(ARMReg::R10, visitor.get_current_visiting_pc() + 4);
-    set_pc(new_des.pc);
-
+    set_pc(addr);
     gen_block_link();
-    end_valid_condition_block(flag);
+}
+
+void arm_recompiler::gen_arm32_bx(ArmGen::Operand2 op)
+{
+    if (op.GetType() == TYPE_REG)
+    {
+        // Set PC
+        set_pc(remap_arm_reg(static_cast<ARMReg>(op.Rm())), true);
+        gen_block_link();
+    }
+    else
+    {
+        set_pc(op.GetData(), true);
+        gen_block_link();
+    }
+}
+
+void arm_recompiler::gen_arm32_blx(ArmGen::Operand2 op)
+{
+    auto ret_addr = visitor.get_current_visiting_pc() +
+        (visitor.is_thumb() ? 1 : 4);
+
+    block->MOVI2R(remap_arm_reg(R_LR), ret_addr);
+
+    if (op.GetType() == TYPE_REG)
+    {
+        // Set PC
+        set_pc(remap_arm_reg(static_cast<ARMReg>(op.Rm())));
+        gen_block_link();
+    }
+    else
+    {
+        set_pc(op.GetData());
+        gen_block_link();
+    }
 }
 
 void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
@@ -1031,8 +1509,8 @@ void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
         {
             // Add them right away, and move this value to destination
             // register
-            std::uint32_t val = visitor.get_current_visiting_pc() + 8 + op.Imm12() & 0b001111111111;
-            block->MOV(reg1, val);
+            std::uint32_t val = visitor.get_current_pc() + op.GetData();
+            block->MOVI2R(reg1, val);
 
             return;
         }
@@ -1068,8 +1546,8 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
         {
             // Add them right away, and move this value to destination
             // register
-            std::uint32_t val = visitor.get_current_visiting_pc() + 8 - op.Imm12() & 0b001111111111;
-            block->MOV(reg1, val);
+            std::uint32_t val = visitor.get_current_pc() + op.GetData();
+            block->MOVI2R(reg1, val);
         }
         else
         {
@@ -1109,38 +1587,316 @@ void arm_recompiler::gen_arm32_cmn(ARMReg reg1, Operand2 op)
 // R15 can't be used
 void arm_recompiler::gen_arm32_mul(ARMReg reg1, ARMReg reg2, ARMReg reg3)
 {
+    allocator.spill_lock(reg2);
+    allocator.spill_lock(reg3);
+
     block->MUL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3));
+
+    allocator.release_all_spill_lock();
 }
 
 // TODO: gen MLA + MLS
 void arm_recompiler::gen_arm32_umull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
 {
+    allocator.spill_lock(reg2);
+    allocator.spill_lock(reg3);
+    allocator.spill_lock(reg4);
+
     block->UMULL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3)
         , remap_arm_reg(reg4));
+
+    allocator.release_all_spill_lock();
 }
 
 void arm_recompiler::gen_arm32_umulal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
 {
+    allocator.spill_lock(reg2);
+    allocator.spill_lock(reg3);
+    allocator.spill_lock(reg4);
+
     block->UMLAL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3)
         , remap_arm_reg(reg4));
+
+    allocator.release_all_spill_lock();
 }
 
 void arm_recompiler::gen_arm32_smull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
 {
+    allocator.spill_lock(reg2);
+    allocator.spill_lock(reg3);
+    allocator.spill_lock(reg4);
+
     block->SMULL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3)
         , remap_arm_reg(reg4));
+
+    allocator.release_all_spill_lock();
 }    
 
 void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
 {
+    allocator.spill_lock(reg2);
+    allocator.spill_lock(reg3);
+    allocator.spill_lock(reg4);
+
     block->SMLAL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3)
         , remap_arm_reg(reg4));
+
+    allocator.release_all_spill_lock();
+}
+
+void arm_recompiler::gen_arm32_bic(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
+{
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(reg2);
+        allocator.spill_lock(static_cast<ARMReg>(op.GetData()));
+    }
+
+    block->BIC(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_operand2(op));
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.release_all_spill_lock();
+    }
+}
+
+void arm_recompiler::gen_arm32_and(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
+{
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(reg2);
+        allocator.spill_lock(static_cast<ARMReg>(op.GetData()));
+    }
+
+    block->AND(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_operand2(op));
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.release_all_spill_lock();
+    }
+}
+
+void arm_recompiler::gen_arm32_orr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
+{
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(reg2);
+        allocator.spill_lock(static_cast<ARMReg>(op.GetData()));
+    }
+
+    block->ORR(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_operand2(op));
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.release_all_spill_lock();
+    }
+}
+
+void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, const int count, bool ascending,
+    bool inc_before, bool write_back)
+{
+    allocator.spill_lock(base);
+    ARMReg remapped_base = remap_arm_reg(base);
+
+    // Two case.
+    // First: The base is not R1, in that case preserve R1
+    // Second: Base is R1. If we don't need write back, then preserve it to make it back to original state later.
+    bool should_push_pop_r = (remapped_base != ARMReg::R1) || (remapped_base == ARMReg::R1 && !write_back);
+
+    if (should_push_pop_r)
+    {
+        block->PUSH(1, ARMReg::R1);
+    }
+
+    if (base == R_PC)
+    {
+        // Must assert that it's not requesting writeback
+        assert(!write_back && "Write back operation on PC is not permitted");
+        block->MOV(ARMReg::R1, visitor.get_current_pc());
+    }
+    else
+    {
+        block->MOV(ARMReg::R1, remap_arm_reg(base));
+    }
+
+    // If ascending, each time stored, add it by 4
+    int add_offset = (ascending ? 4 : -4);
+    
+    // Don't need to spilllock
+    for (int i = 0; i < count; i++)
+    {
+        ARMReg mapped_reg = remap_arm_reg(target[i]);
+        assert(mapped_reg != INVALID_REG);
+
+        if (inc_before)
+        {
+            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+        }
+
+        block->PUSH(3, ARMReg::R0, ARMReg::R2, ARMReg::R14);
+
+        // Don't waste time moving if the mapped register is already r2
+        // Calling this before storing all arguments so that if the mapped register is r0, the value
+        // won't go clobbered.
+        mapped_reg != ARMReg::R2 ? block->MOV(ARMReg::R2, mapped_reg) : 0;
+
+        // Hey, calling store on this.
+        block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
+        block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.write_mem32));
+
+        block->BL(ARMReg::R14);
+        block->POP(3, ARMReg::R0, ARMReg::R2, ARMReg::R14);
+
+        if (!inc_before)
+        {
+            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+        }
+    }
+
+    // If write back:
+    // If the mapped base is R1, we don't need to do anything
+    if (write_back && remapped_base != ARMReg::R1)
+    {
+        block->MOV(remapped_base, ARMReg::R1);
+    }
+
+    if (should_push_pop_r)
+    {
+        block->POP(1, ARMReg::R1);
+    }
+
+    allocator.release_spill_lock(base);
+}
+
+void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, const int count, bool ascending,
+    bool inc_before, bool write_back)
+{
+    allocator.spill_lock(base);
+    ARMReg remapped_base = remap_arm_reg(base);
+
+    // Two case.
+    // First: The base is not R1, in that case preserve R1
+    // Second: Base is R1. If we don't need write back, then preserve it to make it back to original state later.
+    bool should_push_pop_r = (remapped_base != ARMReg::R1) || (remapped_base == ARMReg::R1 && !write_back);
+
+    if (should_push_pop_r)
+    {
+        block->PUSH(1, ARMReg::R1);
+    }
+
+    if (base == R_PC)
+    {
+        // Must assert that it's not requesting writeback
+        assert(!write_back && "Write back operation on PC is not permitted");
+        block->MOV(ARMReg::R1, visitor.get_current_pc());
+    }
+    else
+    {
+        block->MOV(ARMReg::R1, remapped_base);
+    }
+
+    // If ascending, each time loaded, add it by -4
+    int add_offset = (ascending ? -4 : 4);
+    std::vector<ARMReg> mapped_regs;
+
+    bool should_move_new_addr = write_back;
+
+    // Don't need to spilllock
+    for (int i = count - 1; i >= 0; i--)
+    {
+        ARMReg mapped_reg = remap_arm_reg(target[i]);
+        assert(mapped_reg != INVALID_REG);
+        
+        if (base == target[i])
+        {
+            should_move_new_addr = false;
+        }
+
+        mapped_regs.push_back(mapped_reg);
+    }
+
+    bool should_r1_loaded_from_garbage = false;
+    bool should_gen_block_link = false;
+
+    for (const auto &mapped_reg: mapped_regs)
+    {
+        if (inc_before)
+        {
+            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+        }
+
+        (mapped_reg == ARMReg::R0) ? block->PUSH(1, ARMReg::R0) :
+            block->PUSH(2, ARMReg::R0, ARMReg::R14);
+
+        // Hey, calling store on this.
+        block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
+        block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.write_mem32));
+
+        block->BL(ARMReg::R14);
+
+        // Hey moving
+        switch (mapped_reg)
+        {
+        case ARMReg::R1:
+        {
+            // Oh no, this is really unexpected. 
+            // There is a solution for this, which is costly but solve the problem
+            // A garbage storage would be perfect for this.
+            should_r1_loaded_from_garbage = true;
+            block->STR(ARMReg::R0, JIT_STATE_REG, offsetof(jit_state, gar), true);
+
+            break;
+        }
+
+        case ARMReg::R0:
+        {
+            break;
+        }
+
+        case ARMReg::R15:
+        {
+            // Write to PC directly
+            set_pc(mapped_reg);
+            should_gen_block_link = true;
+
+            break;
+        }
+
+        default:
+        {
+            block->MOV(mapped_reg, ARMReg::R0);
+            break;
+        }
+        }
+
+        (mapped_reg == ARMReg::R0) ? block->POP(1, ARMReg::R14) : block->POP(2, ARMReg::R0, ARMReg::R14);
+
+        if (!inc_before)
+        {
+            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+        }
+    }
+
+    // If write back:
+    // If the mapped base is R1, we don't need to do anything
+    if (remapped_base != ARMReg::R1 && should_move_new_addr)
+    {
+        block->MOV(remapped_base, ARMReg::R1);
+    }
+
+    should_push_pop_r ? block->POP(1, ARMReg::R1) : 0;
+    should_r1_loaded_from_garbage ? block->LDR(ARMReg::R1, JIT_STATE_REG, offsetof(jit_state, gar), true) : 0;
+    should_gen_block_link ? gen_block_link() : 0;
+
+    allocator.release_spill_lock(base);
 }
 
 void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Operand2 op, bool subtract, bool write_back,
     bool post_indexed)
 {
     ARMReg mapped_source_reg = remap_arm_reg(source);
+
+    assert((base != R15) && "Can't write to PC");
 
     if (op.GetType() == TYPE_REG)
     {
@@ -1149,21 +1905,14 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     }
 
     ARMReg mapped_base_reg = remap_arm_reg(base);
+    
+    bool should_preserve_r4 = (mapped_base_reg != R4) || (!write_back && mapped_base_reg == R4);
 
-    block->PUSH(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
-
-    if (base == ARMReg::R_PC)
+    if (should_preserve_r4)
     {
-        std::uint32_t addr = visitor.get_current_visiting_pc();
-
-        if (!post_indexed)
-        {
-            addr += subtract ? -(s32)op.Imm12() : op.Imm12();
-        }
-
-        block->MOV(ARMReg::R4, addr);
+        block->PUSH(1, ARMReg::R4);
     }
-    else
+
     {
         // Move register 2 to reg4
         block->MOV(ARMReg::R4, mapped_base_reg);
@@ -1182,12 +1931,20 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
         }
     }
 
+    write_back && (mapped_base_reg == R0) ? block->PUSH(3, ARMReg::R1, ARMReg::R2, ARMReg::R14) :
+        block->PUSH(4, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R14);
+
+    // Move this first.
+    mapped_source_reg != ARMReg::R2 ? block->MOV(ARMReg::R2, mapped_source_reg) : 0;
+
     block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
     block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
     block->MOV(ARMReg::R1, ARMReg::R4);
-    block->MOV(ARMReg::R2, mapped_source_reg);
 
     block->BL(ARMReg::R14);
+
+    write_back && (mapped_base_reg == R0) ? block->POP(3, ARMReg::R1, ARMReg::R2, ARMReg::R14) :
+        block->POP(4, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R14);
 
     if (write_back)
     {
@@ -1214,14 +1971,32 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
         allocator.release_all_spill_lock();
     }
 
-    block->POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R4, ARMReg::R14);
-
+    if (should_preserve_r4)
+    {
+        block->POP(1, ARMReg::R4);
+    }
 }
 
 void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Operand2 op, bool subtract, bool write_back,
     bool post_indexed)
 {
     ARMReg mapped_dest_reg = remap_arm_reg(dest);
+
+    if (base == ARMReg::R_PC)
+    {
+        std::uint32_t addr = visitor.get_current_pc();
+
+        if (!post_indexed)
+        {
+            addr += subtract ? -(s32)op.Imm12() : op.Imm12();
+        }
+
+        // Read memory right away
+        auto val = callback.read_mem32(callback.userdata, addr);
+        block->MOVI2R(mapped_dest_reg, val);
+
+        return;
+    }
 
     if (op.GetType() == TYPE_REG)
     {
@@ -1240,18 +2015,6 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
 
     block->PUSH(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
 
-    if (base == ARMReg::R_PC)
-    {
-        std::uint32_t addr = visitor.get_current_visiting_pc();
-
-        if (!post_indexed)
-        {
-            addr += subtract ? -(s32)op.Imm12() : op.Imm12();
-        }
-
-        block->MOV(ARMReg::R4, addr);
-    } 
-    else
     {
         // Move register 2 to reg4
         block->MOV(ARMReg::R4, mapped_base_reg);
@@ -1365,7 +2128,9 @@ void arm_recompiler::gen_block_link()
     visitor.get_cycles_count_since_last_cond() = 0;
 
     // After adding cycles, get the cycles remaing
-    block->ARMABI_call_function_c_promise_ret(callback.get_remaining_cycles, reinterpret_cast<std::uint32_t>(callback.userdata));
+    block->ARMABI_call_function_c_promise_ret(callback.get_remaining_cycles, 
+        reinterpret_cast<std::uint32_t>(callback.userdata));
+
     block->STR(ARMReg::R0, JIT_STATE_REG, block->jsi.offset_cycles_left, true);
 
     block->ARMABI_call_function_c_promise_ret(block->jit_rt_callback.get_next_block_addr, 
@@ -1448,11 +2213,12 @@ block_descriptor arm_recompiler::recompile(address addr)
     std::uint8_t *b_fail_ptr = (u8*)block->GetCodePointer();
     block->B_CC(CCFlags::CC_LE, b_fail_ptr);
 
+    visitor.set_pc(addr);
+
     block_descriptor descriptor;
     descriptor.begin = location_descriptor{ visitor.get_current_visiting_pc(), 0, 0 };
     descriptor.entry_point = code;
 
-    visitor.set_pc(addr);
     visitor.recompile(this);
 
     // Try to flush right away to avoid unrelated flags
