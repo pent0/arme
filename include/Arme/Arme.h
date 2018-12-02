@@ -183,6 +183,8 @@ private:
     std::uint32_t   cycles_count_since_last_cond;
 
     std::uint32_t   crr_inst;
+    std::string     last;
+
     bool            is_alu_group;
 
     location_descriptor loc;
@@ -204,6 +206,11 @@ public:
     bool is_thumb() const
     {
         return t_reg;
+    }
+
+    void set_break(const bool op)
+    {
+        should_break = op;
     }
 
     cs_insn &get_current_instruction()
@@ -293,10 +300,36 @@ struct jit_state_information
     }
 };
 
+struct label
+{
+    struct branch_info
+    {
+        CCFlags  flag;
+        u8*      reference_address;
+
+        bool     should_link = false;
+    };
+
+    std::vector<branch_info> references;
+    u8*                     address;
+
+    label()
+        : address(nullptr)
+    {
+
+    }
+
+    void reset()
+    {
+        address = nullptr;
+        references.clear();
+    }
+};
+
 struct arm_recompile_block : public ArmGen::ARMXCodeBlock
 {
 private:
-    friend class arm_recompiler;
+    friend struct arm_recompiler;
 
     location_descriptor      descriptor;
     std::uint32_t            orginal_size;
@@ -322,10 +355,17 @@ public:
         }
     }
 
+    ~arm_recompile_block()
+    {
+        FreeCodeSpace();
+    }
+
     void set_runtime_callback(jit_runtime_callback &cb)
     {
         jit_rt_callback = cb;
     }
+
+    void put_label(label &l);
 
     void gen_run_code();
 
@@ -337,6 +377,9 @@ public:
 
     void ARMABI_save_all_registers();
     void ARMABI_load_all_registers();
+
+    void B_L(label &l);
+    void B_CC_L(CCFlags cc, label &l);
 
     template <typename T>
     T get_func_as()
@@ -384,7 +427,8 @@ struct arm_recompiler
 
     explicit arm_recompiler(arm_analyst *analyst, jit_callback callback, arm_recompile_block &block);
 
-    std::uint8_t  *b_addr;
+    label cond_success_label;
+    label cond_fail_label;
 
     ArmGen::ARMReg remap_arm_reg(ArmGen::ARMReg reg);
     ArmGen::Operand2 remap_operand2(ArmGen::Operand2 op);
@@ -474,6 +518,11 @@ struct arm_recompiler
     void flush();
 
     block_descriptor recompile(address addr);
+
+    void reset()
+    {
+        blocks.clear();
+    }
 };
 
 struct jit

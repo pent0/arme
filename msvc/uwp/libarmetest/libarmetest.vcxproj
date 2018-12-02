@@ -1,0 +1,403 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{7e8a58cb-202b-4398-8a88-10cb20b000dd}</ProjectGuid>
+    <RootNamespace>libarmetest</RootNamespace>
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <MinimumVisualStudioVersion>14.0</MinimumVisualStudioVersion>
+    <AppContainerApplication>true</AppContainerApplication>
+    <ApplicationType>Windows Store</ApplicationType>
+    <WindowsTargetPlatformVersion Condition=" '$(WindowsTargetPlatformVersion)' == '' ">10.0.17134.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformMinVersion>10.0.15063.0</WindowsTargetPlatformMinVersion>
+    <ApplicationTypeRevision>10.0</ApplicationTypeRevision>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|ARM">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM">
+      <Configuration>Release</Configuration>
+      <Platform>ARM</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v141</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v141</PlatformToolset>
+    <UseDotNetNativeToolchain>true</UseDotNetNativeToolchain>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <PlatformToolset>v141</PlatformToolset>
+    <UseDotNetNativeToolchain>true</UseDotNetNativeToolchain>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <PlatformToolset>v141</PlatformToolset>
+    <UseDotNetNativeToolchain>true</UseDotNetNativeToolchain>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <PlatformToolset>v141</PlatformToolset>
+    <UseDotNetNativeToolchain>true</UseDotNetNativeToolchain>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <PlatformToolset>v141</PlatformToolset>
+    <UseDotNetNativeToolchain>true</UseDotNetNativeToolchain>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <PackageCertificateKeyFile>libarmetest_TemporaryKey.pfx</PackageCertificateKeyFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(ProjectDir)../../../external/Catch2/include;$(ProjectDir)../../../include</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(ProjectDir)../../../external/Catch2/include;$(ProjectDir)../../../include</IncludePath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+      <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_approx.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_assertionhandler.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_assertioninfo.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_assertionresult.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_benchmark.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_capture.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_capture_matchers.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_clara.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_commandline.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_common.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_compiler_capabilities.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_config.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_console_colour.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_context.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_debugger.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_debug_console.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_decomposer.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_default_main.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_enforce.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_errno_guard.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_exception_translator_registry.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_external_interfaces.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_fatal_condition.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_generators.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_impl.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_capture.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_config.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_exception.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_generatortracker.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_registry_hub.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_reporter.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_runner.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_tag_alias_registry.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_interfaces_testcase.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_leak_detector.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_list.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_matchers.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_matchers_floating.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_matchers_generic.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_matchers_string.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_matchers_vector.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_message.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_objc.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_objc_arc.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_option.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_output_redirect.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_platform.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_polyfills.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_preprocessor.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_random_number_generator.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_reenable_warnings.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_reporter_registrars.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_reporter_registry.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_result_type.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_run_context.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_section.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_section_info.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_session.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_singletons.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_startup_exception_registry.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_stream.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_stringref.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_string_manip.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_suppress_warnings.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_tag_alias.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_tag_alias_autoregistrar.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_tag_alias_registry.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_test_case_info.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_test_case_registry_impl.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_test_case_tracker.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_test_registry.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_test_spec.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_test_spec_parser.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_text.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_timer.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_tostring.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_totals.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_to_string.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_type_traits.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_uncaught_exceptions.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_user_interfaces.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_version.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_wildcard_pattern.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_windows_h_proxy.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\internal\catch_xmlwriter.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_automake.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_bases.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_compact.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_console.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_junit.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_listening.h" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_tap.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_teamcity.hpp" />
+    <ClInclude Include="..\..\..\external\Catch2\include\reporters\catch_reporter_xml.h" />
+    <ClInclude Include="pch.h" />
+    <ClInclude Include="App.xaml.h">
+      <DependentUpon>App.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="MainPage.xaml.h">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="Runner.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationDefinition Include="App.xaml">
+      <SubType>Designer</SubType>
+    </ApplicationDefinition>
+    <Page Include="MainPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+  </ItemGroup>
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+    <None Include="libarmetest_TemporaryKey.pfx" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="Assets\LockScreenLogo.scale-200.png" />
+    <Image Include="Assets\SplashScreen.scale-200.png" />
+    <Image Include="Assets\Square150x150Logo.scale-200.png" />
+    <Image Include="Assets\Square44x44Logo.scale-200.png" />
+    <Image Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+    <Image Include="Assets\StoreLogo.png" />
+    <Image Include="Assets\Wide310x150Logo.scale-200.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_approx.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_assertionhandler.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_assertionresult.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_benchmark.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_capture_matchers.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_commandline.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_common.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_config.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_console_colour.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_context.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_debugger.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_debug_console.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_decomposer.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_enforce.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_errno_guard.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_exception_translator_registry.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_fatal_condition.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_generators.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_capture.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_config.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_exception.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_registry_hub.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_reporter.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_runner.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_interfaces_testcase.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_leak_detector.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_list.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_matchers.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_matchers_floating.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_matchers_generic.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_matchers_string.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_message.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_output_redirect.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_polyfills.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_random_number_generator.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_registry_hub.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_reporter_registry.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_result_type.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_run_context.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_section.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_section_info.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_session.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_singletons.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_startup_exception_registry.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_stream.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_stringref.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_string_manip.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_tag_alias.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_tag_alias_autoregistrar.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_tag_alias_registry.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_test_case_info.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_test_case_registry_impl.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_test_case_tracker.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_test_registry.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_test_spec.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_test_spec_parser.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_timer.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_tostring.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_totals.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_uncaught_exceptions.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_version.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_wildcard_pattern.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\internal\catch_xmlwriter.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_bases.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_compact.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_console.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_junit.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_listening.cpp" />
+    <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_xml.cpp" />
+    <ClCompile Include="App.xaml.cpp">
+      <DependentUpon>App.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="MainPage.xaml.cpp">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ALU.cpp" />
+    <ClCompile Include="Runner.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\libarme.vcxproj">
+      <Project>{3b5bb309-5959-4e9d-a02c-a8cb0c05e8d8}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

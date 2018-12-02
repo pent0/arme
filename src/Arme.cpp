@@ -198,6 +198,8 @@ void arm_register_allocator::discard_reg(ARMReg guest_reg)
     }
 
     host_map_regs[static_cast<int>(guest_map_regs[static_cast<int>(guest_reg)].host_reg)].mapped = false;
+    host_map_regs[static_cast<int>(guest_map_regs[static_cast<int>(guest_reg)].host_reg)].mapped_reg = INVALID_REG;
+    guest_map_regs[static_cast<int>(guest_reg)].host_reg = INVALID_REG;
 }
 
 // The idea of this is:
@@ -264,9 +266,9 @@ bool arm_register_allocator::allocate_free_spot(arm_recompile_block *block, ArmG
             host_map_regs[allocatable[i]].mapped = true;
             host_map_regs[allocatable[i]].mapped_reg = guest_reg;
 
-            guest_map_regs[guest_reg].host_reg = static_cast<ARMReg>(i);
+            guest_map_regs[guest_reg].host_reg = allocatable[i];
 
-            result = static_cast<ARMReg>(i);
+            result = allocatable[i];
             return true;
         }
     }
@@ -672,14 +674,14 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     case ARM_INS_BL:
     {
         recompiler->gen_arm32_bl(arm->operands[op_counter].imm);
-        should_break = true;
+        should_break = false;
         break;
     }
 
     case ARM_INS_BLX:
     {
         recompiler->gen_arm32_blx(get_next_op_from_cs(arm));
-        should_break = true;
+        should_break = false;
         break;
     }
 
@@ -777,6 +779,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     }
     
     loc = loc.advance(insn->size);
+    last = std::string(insn->mnemonic) + " " + insn->op_str;
 
     cycles_count++;
     cycles_count_since_last_cond++;
@@ -807,6 +810,48 @@ void arm_instruction_visitor::recompile(arm_recompiler *recompiler)
 #pragma endregion
 
 #pragma region RECOMPILE_BLOCK
+void arm_recompile_block::put_label(label &l)
+{
+    l.address = (u8*)(GetCodePointer());
+
+    for (auto &reference : l.references)
+    {
+        SetCodePointer((u8*)reference.reference_address);
+        B_CC(reference.flag, (u8*)l.address);
+    }
+
+    SetCodePointer((u8*)l.address);
+    l.references.clear();
+}
+
+void arm_recompile_block::B_L(label &l)
+{
+    if (l.address)
+    {
+        B(l.address);
+        return;
+    }
+
+    l.references.push_back(label::branch_info{ GetCC(), (u8*)GetCodePointer() });
+
+    // Placeholder
+    B_CC(GetCC(), GetCodePointer());
+}
+
+void arm_recompile_block::B_CC_L(CCFlags cc, label &l)
+{
+    if (l.address)
+    {
+        B_CC(cc, l.address);
+        return;
+    }
+
+    l.references.push_back(label::branch_info{ cc, (u8*)GetCodePointer() });
+
+    // Placeholder
+    B_CC(cc, GetCodePointer());
+}
+
 void arm_recompile_block::ARMABI_save_all_registers()
 {
     PUSH(9, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7,
@@ -1091,15 +1136,6 @@ void arm_recompiler::flush()
     */
 
     // We only need to update the flag one
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t op1,
@@ -1159,7 +1195,7 @@ void arm_recompiler::gen_arm32_msr(Operand2 op)
     block->MOVI2R(R14, reinterpret_cast<u32>(update_cpsr_mode));
 
     block->BL(R14);
-    block->POP(4, R0, R1, R2, R3, R14);
+    block->POP(5, R0, R1, R2, R3, R14);
 }
 
 void arm_recompiler::gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t op1,
@@ -1227,7 +1263,7 @@ void arm_recompiler::gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t
 
 void arm_recompiler::save_pc_from_visitor()
 {
-    set_pc(visitor.get_current_pc());
+    set_pc(visitor.get_current_visiting_pc() + (visitor.is_thumb() ? 2 : 4));
 }
 
 void arm_recompiler::set_pc(ArmGen::ARMReg reg, bool exchange)
@@ -1279,6 +1315,16 @@ void arm_recompiler::set_pc(const std::uint32_t off, bool exchange)
     }
 
     block->STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
+
+    /*
+    block->PUSH(2, R0, R14);
+    block->MOV(R0, R4);
+    block->MOVI2R(R14, (u32)(callback.dummy));
+    
+    block->BL(R14);
+    block->POP(2, R0, R14);
+    */
+
     block->POP(1, ARMReg::R4);
 }
 
@@ -1356,12 +1402,30 @@ void arm_recompiler::gen_arm32_tst(ARMReg reg, Operand2 op)
 {
     auto new_dest_reg = remap_arm_reg(reg);
     block->TST(new_dest_reg, remap_operand2(op));
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_teq(ARMReg reg, Operand2 op)
 {
     auto new_dest_reg = remap_arm_reg(reg);
     block->TEQ(new_dest_reg, remap_operand2(op));
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::begin_valid_condition_block(CCFlags cond)
@@ -1371,81 +1435,153 @@ void arm_recompiler::begin_valid_condition_block(CCFlags cond)
         return;
     }
 
-    b_addr = (u8*)block->GetCodePointer();
+    block->PUSH(3, R4, R5, R6);
+    block->LDR(R4, JIT_STATE_REG, offsetof(jit_state, cpsr));
 
-    // Generate a temp conditional instruction
-    block->B_CC(cond, b_addr);
-}
-
-void arm_recompiler::end_valid_condition_block(CCFlags cond)
-{
-    if (cond == CCFlags::CC_AL)
-    {
-        return;
-    }
-
-    std::uint8_t *crr_addr = (u8*)block->GetCodePointer();
-    block->SetCodePointer(b_addr);
+    cond_success_label.reset();
 
     switch (cond)
     {
-    case CCFlags::CC_EQ:
+    case CC_EQ:
     {
-        block->B_CC(CCFlags::CC_NEQ, crr_addr);
+        // Zero flag
+        block->TST(R4, encode_imm(1 << 30));
+        block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_NEQ:
+    case CC_NEQ:
     {
-        block->B_CC(CCFlags::CC_EQ, crr_addr);
+        block->TST(R4, encode_imm(1 << 30));
+        block->B_CC_L(CCFlags::CC_EQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_PL:
+    case CC_PL:
     {
-        block->B_CC(CCFlags::CC_MI, crr_addr);
+        block->TST(R4, encode_imm(1 << 31));
+        block->B_CC_L(CCFlags::CC_EQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_MI:
+    // Check for bit 31. If zero, branch to code address 
+    case CC_MI:
     {
-        block->B_CC(CCFlags::CC_PL, crr_addr);
+        block->TST(R4, encode_imm(1 << 31));
+        block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_GT:
+    case CC_VS:
     {
-        block->B_CC(CCFlags::CC_LE, crr_addr);
+        block->TST(R4, encode_imm(1 << 28));
+        block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_GE:
+    // Check for bit 28. If not zero (z = 1 <=> eq), branch to code address 
+    case CC_VC:
     {
-        block->B_CC(CCFlags::CC_LT, crr_addr);
+        block->TST(R4, encode_imm(1 << 28));
+        block->B_CC_L(CCFlags::CC_EQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_LE:
+    case CC_HI:
     {
-        block->B_CC(CCFlags::CC_GT, crr_addr);
+        block->AND(R4, R4, encode_imm((1 << 30) | (1 << 29)));
+        block->CMP(R4, encode_imm(1 << 29));
+        block->B_CC_L(CCFlags::CC_EQ, cond_success_label);
+
         break;
     }
 
-    case CCFlags::CC_LT:
+    case CC_LS:
     {
-        block->B_CC(CCFlags::CC_GE, crr_addr);
+        block->AND(R4, R4, encode_imm((1 << 30) | (1 << 29)));
+        block->CMP(R4, encode_imm(1 << 29));
+        block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
+
+        break;
+    }
+
+    case CC_LT:
+    {
+        label fail_label;
+
+        block->AND(R4, R4, encode_imm((1 << 31) | (1 << 28)));
+        block->B_CC_L(CC_EQ, fail_label);
+        block->CMP(R4, encode_imm((1 << 31) | (1 << 28)));
+        block->B_CC_L(CC_NEQ, cond_success_label);
+        block->put_label(fail_label);
+
+        break;
+    }
+
+    case CC_GE:
+    {
+        block->AND(R4, R4, encode_imm((1 << 31) | (1 << 28)));
+        block->B_CC_L(CC_EQ, cond_success_label);
+        block->CMP(R4, encode_imm((1 << 31) | (1 << 28)));
+        block->B_CC_L(CC_EQ, cond_success_label);
+
+        break;
+    }
+
+    case CC_GT:
+    {
+        block->MOV(R5, R4);
+        block->MOV(R6, R4);
+        block->ASR(R5, R5, encode_imm(1 << 31));
+        block->ASR(R6, R6, encode_imm(1 << 28));
+        block->ASR(R4, R4, encode_imm(1 << 30));
+        block->EOR(R5, R5, R6);
+        block->ORR(R5, R5, R4);
+        block->TST(R5, 1);
+        block->B_CC_L(CC_EQ, cond_success_label);
+
+        break;
+    }
+
+    case CC_LE:
+    {
+        block->MOV(R5, R4);
+        block->MOV(R6, R4);
+        block->ASR(R5, R5, encode_imm(1 << 31));
+        block->ASR(R6, R6, encode_imm(1 << 28));
+        block->ASR(R4, R4, encode_imm(1 << 30));
+        block->EOR(R5, R5, R6);
+        block->ORR(R5, R5, R4);
+        block->TST(R5, 1);
+        block->B_CC_L(CC_NEQ, cond_success_label);
+
         break;
     }
 
     default:
     {
-        assert(false && "Unhandle CC Flags");
+        assert(false && "Unsupported");
         break;
     }
     }
 
-    block->SetCodePointer(crr_addr);
-    save_pc_from_visitor();
+    block->POP(3, R4, R5, R6);
+    block->B_L(cond_fail_label);
+
+    block->put_label(cond_success_label);
+    block->POP(3, R4, R5, R6);
+}
+
+void arm_recompiler::end_valid_condition_block(CCFlags cond)
+{
+    block->put_label(cond_fail_label);
+    cond_fail_label.reset();
 }
 
 void arm_recompiler::gen_arm32_b(address addr)
@@ -1532,10 +1668,28 @@ void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
 
         block->ADD(remap_arm_reg(reg1), source1, source2);
 
+        begin_gen_cpsr_update();
+
+        gen_cpsr_update_n_flag();
+        gen_cpsr_update_c_flag();
+        gen_cpsr_update_z_flag();
+        gen_cpsr_update_v_flag();
+
+        end_gen_cpsr_update();
+
         return;
     }
 
     block->ADD(remap_arm_reg(reg1), remap_arm_reg(reg2), op);
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
@@ -1568,20 +1722,56 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
         allocator.release_all_spill_lock();
         block->SUB(remap_arm_reg(reg1), source1, source2);
 
+        begin_gen_cpsr_update();
+
+        gen_cpsr_update_n_flag();
+        gen_cpsr_update_c_flag();
+        gen_cpsr_update_z_flag();
+        gen_cpsr_update_v_flag();
+
+        end_gen_cpsr_update();
+
         return;
     }
 
     block->SUB(remap_arm_reg(reg1), remap_arm_reg(reg2), op);
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_cmp(ARMReg reg1, Operand2 op)
 {
     block->CMP(remap_arm_reg(reg1), remap_operand2(op));
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_cmn(ARMReg reg1, Operand2 op)
 {
     block->CMN(remap_arm_reg(reg1), remap_operand2(op));
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 // R15 can't be used
@@ -1593,6 +1783,15 @@ void arm_recompiler::gen_arm32_mul(ARMReg reg1, ARMReg reg2, ARMReg reg3)
     block->MUL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3));
 
     allocator.release_all_spill_lock();
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 // TODO: gen MLA + MLS
@@ -1606,6 +1805,15 @@ void arm_recompiler::gen_arm32_umull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_umulal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
@@ -1618,6 +1826,15 @@ void arm_recompiler::gen_arm32_umulal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARM
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_smull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
@@ -1630,6 +1847,15 @@ void arm_recompiler::gen_arm32_smull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }    
 
 void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
@@ -1642,6 +1868,15 @@ void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_bic(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
@@ -1658,6 +1893,15 @@ void arm_recompiler::gen_arm32_bic(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Arm
     {
         allocator.release_all_spill_lock();
     }
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_and(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
@@ -1674,6 +1918,15 @@ void arm_recompiler::gen_arm32_and(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Arm
     {
         allocator.release_all_spill_lock();
     }
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_orr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
@@ -1690,6 +1943,15 @@ void arm_recompiler::gen_arm32_orr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Arm
     {
         allocator.release_all_spill_lock();
     }
+
+    begin_gen_cpsr_update();
+
+    gen_cpsr_update_n_flag();
+    gen_cpsr_update_c_flag();
+    gen_cpsr_update_z_flag();
+    gen_cpsr_update_v_flag();
+
+    end_gen_cpsr_update();
 }
 
 void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, const int count, bool ascending,
@@ -1857,6 +2119,7 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         {
             // Write to PC directly
             set_pc(mapped_reg);
+            visitor.set_break(true);
             should_gen_block_link = true;
 
             break;
@@ -1992,9 +2255,19 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
         }
 
         // Read memory right away
-        auto val = callback.read_mem32(callback.userdata, addr);
-        block->MOVI2R(mapped_dest_reg, val);
+        address val = callback.read_mem32(callback.userdata, addr);
 
+        if (dest == R15)
+        {
+            set_pc(val);
+            gen_block_link();
+
+            visitor.set_break(true);
+
+            return;
+        }
+
+        block->MOVI2R(mapped_dest_reg, val);
         return;
     }
 
@@ -2013,11 +2286,31 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
         block->PUSH(1, ARMReg::R4);
     }
 
-    block->PUSH(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
+    switch (mapped_dest_reg)
+    {
+    case R0:
+    {
+        block->PUSH(2, R1, R14);
+        break;
+    }
+
+    case R1:
+    {
+        block->PUSH(2, R0, R14);
+        break;
+    }
+
+    default:
+    {
+        block->PUSH(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
+        break;
+    }
+    }
 
     {
         // Move register 2 to reg4
         block->MOV(ARMReg::R4, mapped_base_reg);
+        block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
 
         if (!post_indexed)
         {
@@ -2040,17 +2333,9 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
 
     block->BL(ARMReg::R14);
-
-    if (dest == ARMReg::R_PC)
-    {
-        set_pc(ARMReg::R0);
-        gen_block_link();
-    }
-    else
-    {    
-        // We got the value in r0!
-        block->MOV(mapped_dest_reg, ARMReg::R0);
-    }
+    
+    // We got the value in r0!
+    block->MOV(mapped_dest_reg, ARMReg::R0);
 
     if (write_back)
     {
@@ -2069,7 +2354,12 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
             }
         }
 
+        // We are still moving, in case function accidently overwrite the mapped base
         block->MOV(mapped_base_reg, ARMReg::R4);
+    }
+    else
+    {
+        block->LDR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
     }
 
     if (op.GetType() == TYPE_REG)
@@ -2078,7 +2368,27 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     }
 
     // Should be in order
-    block->POP(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
+
+    switch (mapped_dest_reg)
+    {
+    case R0:
+    {
+        block->POP(2, R1, R14);
+        break;
+    }
+
+    case R1:
+    {
+        block->POP(2, R0, R14);
+        break;
+    }
+
+    default:
+    {
+        block->POP(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
+        break;
+    }
+    }
 
     if (mapped_dest_reg != ARMReg::R4)
     {
@@ -2136,7 +2446,7 @@ void arm_recompiler::gen_block_link()
     block->ARMABI_call_function_c_promise_ret(block->jit_rt_callback.get_next_block_addr, 
         reinterpret_cast<std::uint32_t>(block->jit_rt_callback.userdata));
 
-    block->B(ARMReg::R0);
+    block->BL(ARMReg::R0);
 }
 
 // Let's generate the dispatcher code
@@ -2154,6 +2464,10 @@ void arm_recompile_block::gen_run_code()
     // Now, store the SP in R11
     LDR(ARMReg::R11, JIT_STATE_REG, jsi.offset_reg + R13 * sizeof(std::uint32_t), true);
 
+    // Get LR
+    LDR(ARMReg::R10, JIT_STATE_REG, jsi.offset_reg + R_LR * sizeof(std::uint32_t),
+        true);
+
     ARMABI_call_function_c_promise_ret(reinterpret_cast<void*>(callback.get_remaining_cycles),
         reinterpret_cast<std::uint32_t>(callback.userdata));
 
@@ -2162,7 +2476,8 @@ void arm_recompile_block::gen_run_code()
     STR(ARMReg::R0, JIT_STATE_REG, jsi.offset_cycles_to_run, true);
 
     // This is where we will loop back if the ticks are still available
-    void *loop_start = (void*)(GetCodePointer());
+    label l;
+    put_label(l);
 
     // Next, lookup the block to run to. If we can't find, we can create new one
     ARMABI_call_function_c_promise_ret(reinterpret_cast<void*>(jit_rt_callback.get_next_block_addr),
@@ -2175,25 +2490,11 @@ void arm_recompile_block::gen_run_code()
     LDR(ARMReg::R4, JIT_STATE_REG, jsi.offset_cycles_left, true);
     CMP(ARMReg::R4, 0);
 
-    B_CC(CCFlags::CC_GT, loop_start);
-
-    // Add ticks otherwise. Supposed no ?  
-    /*
-    LDR(ARMReg::R0, ARMReg::R10, jsi.offset_cycles_left, true);
-    LDR(ARMReg::R1, ARMReg::R10, jsi.offset_cycles_to_run, true);
-
-    SUB(ARMReg::R1, ARMReg::R1, ARMReg::R0);
-    MOV(ARMReg::R0, reinterpret_cast<std::uint32_t>(callback.userdata));
-
-    BL(reinterpret_cast<void*>(callback.add_cycles));
-    */
-
+    B_CC_L(CCFlags::CC_GT, l);
+    
     // Welp, we added cycles, looks like job is done. Time to load all registers and return
     ARMABI_load_all_registers();
-
-    /* Now save them all in the states */
-
-    BL(ARMReg::R_LR);
+    B(ARMReg::R_LR);
     
     AlignCodePage();
     EndWrite();
@@ -2204,14 +2505,13 @@ block_descriptor arm_recompiler::recompile(address addr)
     code_ptr code = reinterpret_cast<code_ptr>(block->AlignCodePage());
 
     block->BeginWrite();
-
     block->ARMABI_save_all_registers();
 
     block->LDR(ARMReg::R4, JIT_STATE_REG, block->jsi.offset_cycles_left, true);
     block->CMP(ARMReg::R4, 0);
 
-    std::uint8_t *b_fail_ptr = (u8*)block->GetCodePointer();
-    block->B_CC(CCFlags::CC_LE, b_fail_ptr);
+    label l;
+    block->B_CC_L(CCFlags::CC_LE, l);
 
     visitor.set_pc(addr);
 
@@ -2225,16 +2525,11 @@ block_descriptor arm_recompiler::recompile(address addr)
     flush();
 
     // Come back to the place where we were supposed to end this if the ticks is not enough
-    // Jump to the end of the block if not enough ticks is available
-    std::uint8_t *crr_code = (u8*)block->GetCodePointer();
-    block->SetCodePointer(b_fail_ptr);
+    // Jump to the end of the block if not enough ticks is available    
+    block->put_label(l);
 
-    block->B_CC(CCFlags::CC_LE, crr_code);
-
-    // Come back to the current, and emit load all registers
-    block->SetCodePointer(crr_code);
-
-    /* Dummy used to check if the branch has reached here yet
+    // Dummy used to check if the branch has reached here yet
+    /*
     block->MOV(ARMReg::R0, JIT_STATE_REG);
     block->ARMABI_call_function(callback.dummy);
     */
@@ -2247,7 +2542,7 @@ block_descriptor arm_recompiler::recompile(address addr)
 
     block->AlignCodePage();
     block->EndWrite();
-
+    
     return descriptor;
 }
 
@@ -2313,6 +2608,7 @@ void jit::reset()
     }
 
     state.cpsr = 0xD3;
+    recompiler.reset();
 }
 
 }
