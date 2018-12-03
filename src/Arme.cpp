@@ -578,7 +578,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 {
     auto insn = analyst->disassemble_instructions(loc.pc - (t_reg ? 4 : 8), t_reg);
     crr_inst = callback.read_code32 ? callback.read_code32(callback.userdata, loc.pc - (t_reg ? 4 : 8))
-        : callback.read_mem32(callback.userdata, loc.pc);
+        : callback.read_mem32(callback.userdata, loc.pc - (t_reg ? 4: 8));
 
     //printf("[0x%08x] %s %s\n", insn->address, insn->mnemonic, insn->op_str);
 
@@ -716,11 +716,20 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {                               \
         auto r1 = get_next_reg_from_cs(arm);                    \
         auto r2 = get_next_reg_from_cs(arm, false);             \
-        auto op = arm->operands[op_counter].mem.index != arm_reg::ARM_REG_INVALID ? Operand2(cs_arm_reg_to_reg(arm->operands[op_counter].mem.index), \
-            ShiftType::ST_LSL, arm->operands[op_counter].mem.lshift) : encode_imm(arm->operands[op_counter].mem.disp);                              \
-        recompiler->gen_arm32_##func_name(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback                                      \
-            , arm->operands[op_counter].imm & (2 << 9) ? true : false);                                                                 \
-        break;                                                                                                                          \
+        bool post = (crr_inst & (1 << 24)) ? false : true;      \
+        Operand2 op;                                            \
+        if (post)                                               \
+        {                                                       \
+            op = encode_imm(arm->operands[++op_counter].imm);   \
+        }                                                       \
+        else                                                    \
+        {                                                       \
+            op = arm->operands[op_counter].mem.index != ARM_REG_INVALID ? Operand2(cs_arm_reg_to_reg(arm->operands[op_counter].mem.index),  \
+                ShiftType::ST_LSL, arm->operands[op_counter].mem.lshift) : encode_imm(arm->operands[op_counter].mem.disp);                  \
+        }                                                                                                                                   \
+        recompiler->gen_arm32_##func_name(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback                                  \
+            , post);                                                                                                                        \
+        break;                                                                                                                              \
     }
 
 #define DECLARE_LDM_BASE(inst, ascending, inc_before)   \
@@ -767,7 +776,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     DECLARE_ALU_BASE(LDRH, ldrh)
 
     default:
-    {
+    {             
         assert(false && "Unimplemented instructions!");
         break;
     }
@@ -810,6 +819,112 @@ void arm_instruction_visitor::recompile(arm_recompiler *recompiler)
 #pragma endregion
 
 #pragma region RECOMPILE_BLOCK
+void arm_recompile_block::preserve(preserve_list &reg_list)
+{
+    switch (reg_list.size())
+    {
+    case 0:
+    {
+        return;
+    }
+
+    case 1:
+    {
+        PUSH(1, reg_list.regs[0]);
+        break;
+    }
+
+    case 2:
+    {
+        PUSH(2, reg_list.regs[0], reg_list.regs[1]);
+        break;
+    }
+
+    case 3:
+    {
+        PUSH(3, reg_list.regs[0], reg_list.regs[1], reg_list.regs[2]);
+        break;
+    }
+
+    case 4:
+    {
+        PUSH(4, reg_list.regs[0], reg_list.regs[1], reg_list.regs[2], reg_list.regs[3]);
+        break;
+    }
+
+    case 5:
+    {
+        PUSH(5, reg_list.regs[0], reg_list.regs[1], reg_list.regs[2], reg_list.regs[3], reg_list.regs[4]);
+        break;
+    }
+
+    default:
+    {
+        for (const auto &reg : reg_list.regs)
+        {
+            PUSH(1, reg);
+        }
+
+        break;
+    }
+    }
+
+    reg_list.locked = true;
+}
+
+void arm_recompile_block::return_back_what_preserved(preserve_list &reg_list)
+{
+    switch (reg_list.size())
+    {
+    case 0:
+    {
+        return;
+    }
+
+    case 1:
+    {
+        POP(1, reg_list.regs[0]);
+        break;
+    }
+
+    case 2:
+    {
+        POP(2, reg_list.regs[0], reg_list.regs[1]);
+        break;
+    }
+
+    case 3:
+    {
+        POP(3, reg_list.regs[0], reg_list.regs[1], reg_list.regs[2]);
+        break;
+    }
+
+    case 4:
+    {
+        POP(4, reg_list.regs[0], reg_list.regs[1], reg_list.regs[2], reg_list.regs[3]);
+        break;
+    }
+
+    case 5:
+    {
+        POP(5, reg_list.regs[0], reg_list.regs[1], reg_list.regs[2], reg_list.regs[3], reg_list.regs[4]);
+        break;
+    }
+
+    default:
+    {
+        for (size_t i = reg_list.size() - 1; i >= 0; i--)
+        {
+            POP(1, reg_list.regs[i]);
+        }
+
+        break;
+    }
+    }
+
+    reg_list.locked = false;
+}
+
 void arm_recompile_block::put_label(label &l)
 {
     l.address = (u8*)(GetCodePointer());
@@ -1700,7 +1815,7 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
         {
             // Add them right away, and move this value to destination
             // register
-            std::uint32_t val = visitor.get_current_pc() + op.GetData();
+            std::uint32_t val = visitor.get_current_pc() - op.GetData();
             block->MOVI2R(reg1, val);
         }
         else
@@ -1960,15 +2075,10 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
     allocator.spill_lock(base);
     ARMReg remapped_base = remap_arm_reg(base);
 
-    // Two case.
-    // First: The base is not R1, in that case preserve R1
-    // Second: Base is R1. If we don't need write back, then preserve it to make it back to original state later.
-    bool should_push_pop_r = (remapped_base != ARMReg::R1) || (remapped_base == ARMReg::R1 && !write_back);
+    preserve_list list{ {R0, R1, R2, R14} };
+    list.remove_reg(remapped_base);
 
-    if (should_push_pop_r)
-    {
-        block->PUSH(1, ARMReg::R1);
-    }
+    block->preserve(list);
 
     if (base == R_PC)
     {
@@ -1995,8 +2105,6 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
             block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
         }
 
-        block->PUSH(3, ARMReg::R0, ARMReg::R2, ARMReg::R14);
-
         // Don't waste time moving if the mapped register is already r2
         // Calling this before storing all arguments so that if the mapped register is r0, the value
         // won't go clobbered.
@@ -2007,7 +2115,6 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.write_mem32));
 
         block->BL(ARMReg::R14);
-        block->POP(3, ARMReg::R0, ARMReg::R2, ARMReg::R14);
 
         if (!inc_before)
         {
@@ -2022,11 +2129,7 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         block->MOV(remapped_base, ARMReg::R1);
     }
 
-    if (should_push_pop_r)
-    {
-        block->POP(1, ARMReg::R1);
-    }
-
+    block->return_back_what_preserved(list);
     allocator.release_spill_lock(base);
 }
 
@@ -2034,16 +2137,29 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
     bool inc_before, bool write_back)
 {
     allocator.spill_lock(base);
+    
     ARMReg remapped_base = remap_arm_reg(base);
 
-    // Two case.
-    // First: The base is not R1, in that case preserve R1
-    // Second: Base is R1. If we don't need write back, then preserve it to make it back to original state later.
-    bool should_push_pop_r = (remapped_base != ARMReg::R1) || (remapped_base == ARMReg::R1 && !write_back);
+    preserve_list list{ {R0, R1, R14} };
+    list.remove_reg(remapped_base);
 
-    if (should_push_pop_r)
+    std::vector<ARMReg> mapped_regs;
+    
+    bool should_move_new_addr = write_back;
+
+    // Don't need to spilllock
+    for (int i = count - 1; i >= 0; i--)
     {
-        block->PUSH(1, ARMReg::R1);
+        ARMReg mapped_reg = remap_arm_reg(target[i]);
+        assert(mapped_reg != INVALID_REG);
+
+        if (base == target[i])
+        {
+            should_move_new_addr = false;
+        }
+
+        mapped_regs.push_back(mapped_reg);
+        list.remove_reg(mapped_reg);
     }
 
     if (base == R_PC)
@@ -2059,24 +2175,7 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
 
     // If ascending, each time loaded, add it by -4
     int add_offset = (ascending ? -4 : 4);
-    std::vector<ARMReg> mapped_regs;
-
-    bool should_move_new_addr = write_back;
-
-    // Don't need to spilllock
-    for (int i = count - 1; i >= 0; i--)
-    {
-        ARMReg mapped_reg = remap_arm_reg(target[i]);
-        assert(mapped_reg != INVALID_REG);
-        
-        if (base == target[i])
-        {
-            should_move_new_addr = false;
-        }
-
-        mapped_regs.push_back(mapped_reg);
-    }
-
+    
     bool should_r1_loaded_from_garbage = false;
     bool should_gen_block_link = false;
 
@@ -2086,9 +2185,6 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         {
             block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
         }
-
-        (mapped_reg == ARMReg::R0) ? block->PUSH(1, ARMReg::R0) :
-            block->PUSH(2, ARMReg::R0, ARMReg::R14);
 
         // Hey, calling store on this.
         block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
@@ -2132,8 +2228,6 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         }
         }
 
-        (mapped_reg == ARMReg::R0) ? block->POP(1, ARMReg::R14) : block->POP(2, ARMReg::R0, ARMReg::R14);
-
         if (!inc_before)
         {
             block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
@@ -2147,7 +2241,8 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         block->MOV(remapped_base, ARMReg::R1);
     }
 
-    should_push_pop_r ? block->POP(1, ARMReg::R1) : 0;
+    block->return_back_what_preserved(list);
+
     should_r1_loaded_from_garbage ? block->LDR(ARMReg::R1, JIT_STATE_REG, offsetof(jit_state, gar), true) : 0;
     should_gen_block_link ? gen_block_link() : 0;
 
@@ -2168,35 +2263,32 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     }
 
     ARMReg mapped_base_reg = remap_arm_reg(base);
-    
-    bool should_preserve_r4 = (mapped_base_reg != R4) || (!write_back && mapped_base_reg == R4);
+    preserve_list save_list{ {R0, R1, R2, R4, R14} };
 
-    if (should_preserve_r4)
+    if (write_back)
     {
-        block->PUSH(1, ARMReg::R4);
+        save_list.remove_reg(mapped_base_reg);
     }
 
-    {
-        // Move register 2 to reg4
-        block->MOV(ARMReg::R4, mapped_base_reg);
+    block->preserve(save_list);
 
-        if (!post_indexed)
+    // Move register 2 to reg4
+    block->MOV(ARMReg::R4, mapped_base_reg);
+    block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
+
+    if (!post_indexed)
+    {
+        // Next, add them with base. The value will stay in R4
+        if (subtract)
         {
-            // Next, add them with base. The value will stay in R4
-            if (subtract)
-            {
-                block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
-            }
-            else
-            {
-                block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
-            }
+            block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
+        }
+        else
+        {
+            block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
         }
     }
-
-    write_back && (mapped_base_reg == R0) ? block->PUSH(3, ARMReg::R1, ARMReg::R2, ARMReg::R14) :
-        block->PUSH(4, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R14);
-
+    
     // Move this first.
     mapped_source_reg != ARMReg::R2 ? block->MOV(ARMReg::R2, mapped_source_reg) : 0;
 
@@ -2205,9 +2297,6 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     block->MOV(ARMReg::R1, ARMReg::R4);
 
     block->BL(ARMReg::R14);
-
-    write_back && (mapped_base_reg == R0) ? block->POP(3, ARMReg::R1, ARMReg::R2, ARMReg::R14) :
-        block->POP(4, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R14);
 
     if (write_back)
     {
@@ -2228,16 +2317,17 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
 
         block->MOV(mapped_base_reg, ARMReg::R4);
     }
+    else
+    {
+        block->LDR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
+    }
 
     if (op.GetType() == TYPE_REG)
     {
         allocator.release_all_spill_lock();
     }
 
-    if (should_preserve_r4)
-    {
-        block->POP(1, ARMReg::R4);
-    }
+    block->return_back_what_preserved(save_list);
 }
 
 void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Operand2 op, bool subtract, bool write_back,
@@ -2278,54 +2368,34 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     }
 
     ARMReg mapped_base_reg = remap_arm_reg(base);
+    preserve_list save_list{ {R0, R1, R4, R14} };
 
-    // Using local variable R4. Make sure we doesn't push this if the mapped dest is r4,
-    // since it's going to be clobbered.
-    if (mapped_dest_reg != ARMReg::R4)
+    save_list.remove_reg(mapped_dest_reg);
+    
+    if (write_back)
     {
-        block->PUSH(1, ARMReg::R4);
+        save_list.remove_reg(mapped_base_reg);
     }
 
-    switch (mapped_dest_reg)
-    {
-    case R0:
-    {
-        block->PUSH(2, R1, R14);
-        break;
-    }
+    block->preserve(save_list);
 
-    case R1:
-    {
-        block->PUSH(2, R0, R14);
-        break;
-    }
+    // Move register 2 to reg4
+    block->MOV(ARMReg::R4, mapped_base_reg);
+    block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
 
-    default:
+    if (!post_indexed)
     {
-        block->PUSH(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
-        break;
-    }
-    }
-
-    {
-        // Move register 2 to reg4
-        block->MOV(ARMReg::R4, mapped_base_reg);
-        block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
-
-        if (!post_indexed)
+        // Next, add them with base. The value will stay in R4
+        if (subtract)
         {
-            // Next, add them with base. The value will stay in R4
-            if (subtract)
-            {
-                block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
-            }
-            else
-            {
-                block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
-            }
+            block->SUB(ARMReg::R4, ARMReg::R4, remap_operand2(op));
+        }
+        else
+        {
+            block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
         }
     }
-
+    
     // Nice, we now got the address in R1, let's move the userdata to r0,
     // function pointer in r14 and branch.
     block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
@@ -2368,32 +2438,7 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     }
 
     // Should be in order
-
-    switch (mapped_dest_reg)
-    {
-    case R0:
-    {
-        block->POP(2, R1, R14);
-        break;
-    }
-
-    case R1:
-    {
-        block->POP(2, R0, R14);
-        break;
-    }
-
-    default:
-    {
-        block->POP(3, ARMReg::R0, ARMReg::R1, ARMReg::R14);
-        break;
-    }
-    }
-
-    if (mapped_dest_reg != ARMReg::R4)
-    {
-        block->POP(1, ARMReg::R4);
-    }
+    block->return_back_what_preserved(save_list);
 }
 
 void arm_recompiler::gen_arm32_str(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)

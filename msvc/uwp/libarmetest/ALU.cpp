@@ -55,11 +55,11 @@ TEST_CASE("LDR with PC to PC", "ALU")
     REQUIRE(jit->state.regs[1] == 512);
 }
 
-TEST_CASE("LDR with writeback", "ALU")
+TEST_CASE("LDR with writeback (post and pre)", "ALU")
 {
     Reset();
 
-    cbd.ticks_left = 2;
+    cbd.ticks_left = 3;
     jit->state.regs[15] = 1024;
     jit->state.regs[14] = 1024;
     jit->state.regs[6] = 2040;
@@ -67,6 +67,7 @@ TEST_CASE("LDR with writeback", "ALU")
 
     write_memory32(&cbd, 2048, 956);
     write_memory32(&cbd, 2052, 1024);
+
     write_memory32(&cbd, 1024, 0xE5B62008);     // LDR R2, [R6, #8]!
     write_memory32(&cbd, 1028, 0xE4163006);     // LDR R3, [R6], #-6
     write_memory32(&cbd, 1032, 0xE12FFF1E);     // BX LR
@@ -99,4 +100,53 @@ TEST_CASE("LDR register without writeback", "ALU")
     REQUIRE(jit->state.regs[0] == 9250);
     REQUIRE(jit->state.regs[3] == 9250);
     REQUIRE(jit->state.regs[5] == 1054);
+}
+
+TEST_CASE("STR register without writeback", "ALU")
+{
+    Reset();
+    cbd.ticks_left = 2;
+
+    jit->state.regs[15] = 1038;
+    jit->state.regs[14] = 1038;
+    jit->state.regs[4] = 96500;
+    jit->state.regs[5] = 1054;
+
+    write_memory32(&cbd, 1038, 0xE2844F7D);     // ADD R4, R4, 500
+    write_memory32(&cbd, 1042, 0xE5854004);     // STR R4, [R5, #4]
+    write_memory32(&cbd, 1046, 0xE12FFF1E);     // BX LR
+
+    jit->execute();
+
+    std::uint32_t result = read_memory32(&cbd, 1058);
+
+    REQUIRE(result == 97000);
+    REQUIRE(jit->state.regs[5] == 1054);
+}
+
+TEST_CASE("STR register with writeback", "ALU")
+{
+    Reset();
+    cbd.ticks_left = 4;
+
+    jit->state.regs[15] = 1038;
+    jit->state.regs[14] = 1038;
+    jit->state.regs[4] = 96500;
+    jit->state.regs[5] = 1054;
+
+    write_memory32(&cbd, 1038, 0xE2844F7D);     // ADD R4, R4, 500
+    write_memory32(&cbd, 1042, 0xE5A54004);     // STR R4, [R5, #4]!
+    write_memory32(&cbd, 1046, 0xE2444064);     // SUB R4, R4, 100
+    write_memory32(&cbd, 1050, 0xE2855004);     // ADD R5, R5, #4
+    write_memory32(&cbd, 1054, 0xE405400C);     // STR R4, [R5], #-12
+    write_memory32(&cbd, 1058, 0xE12FFF1E);     // BX LR
+
+    jit->execute();
+
+    std::uint32_t result = read_memory32(&cbd, 1058);
+    std::uint32_t result2 = read_memory32(&cbd, 1062);
+
+    REQUIRE(result == 97000);
+    REQUIRE(result2 == 96900);
+    REQUIRE(jit->state.regs[5] == 1050);
 }

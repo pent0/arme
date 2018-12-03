@@ -326,6 +326,61 @@ struct label
     }
 };
 
+struct preserve_list
+{
+    friend struct arm_recompile_block;
+
+private:
+    std::vector<ArmGen::ARMReg> regs;
+    bool locked = false;
+
+public:
+    preserve_list(std::initializer_list<ArmGen::ARMReg> regs)
+        : regs(regs), locked(false)
+    {
+    }
+
+    void remove_reg(ArmGen::ARMReg reg)
+    {
+        if (locked)
+        {
+            return;
+        }
+
+        auto result = std::find(regs.begin(), regs.end(), reg);
+
+        if (result != regs.end())
+        {
+            regs.erase(result);
+        }
+    }
+
+    void add_reg(ArmGen::ARMReg reg)
+    {
+        if (locked)
+        {
+            return;
+        }
+
+        auto result = std::find(regs.begin(), regs.end(), reg);
+
+        if (result == regs.end())
+        {
+            regs.push_back(reg);
+        }
+    }
+
+    void clear()
+    {
+        regs.clear();
+    }
+
+    std::size_t size()
+    {
+        return regs.size();
+    }
+};
+
 struct arm_recompile_block : public ArmGen::ARMXCodeBlock
 {
 private:
@@ -380,6 +435,9 @@ public:
 
     void B_L(label &l);
     void B_CC_L(CCFlags cc, label &l);
+
+    void preserve(preserve_list &reg_list);
+    void return_back_what_preserved(preserve_list &reg_list);
 
     template <typename T>
     T get_func_as()
