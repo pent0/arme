@@ -150,3 +150,29 @@ TEST_CASE("STR register with writeback", "ALU")
     REQUIRE(result2 == 96900);
     REQUIRE(jit->state.regs[5] == 1050);
 }
+
+TEST_CASE("STM/LDM (descending + FD)")
+{
+    Reset();
+    cbd.ticks_left = 1;
+
+    jit->state.regs[15] = 1024;
+    jit->state.regs[14] = 1024;
+    jit->state.regs[13] = 2040;
+
+    write_memory32(&cbd, 2052, 156);
+    write_memory32(&cbd, 2048, 12);
+    write_memory32(&cbd, 2044, 2055);
+    write_memory32(&cbd, 2040, 10424);
+
+    write_memory32(&cbd, 1024, 0xE8BD000F);     // LDMFD SP!, { R0 - R3 }
+    write_memory32(&cbd, 1028, 0xE12FFF1E);     // BX LR
+
+    jit->execute();
+
+    REQUIRE(jit->state.regs[0] == 10424);
+    REQUIRE(jit->state.regs[1] == 2055);
+    REQUIRE(jit->state.regs[2] == 12);
+    REQUIRE(jit->state.regs[3] == 156);
+    REQUIRE(jit->state.regs[13] == 2056);
+}
