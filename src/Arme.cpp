@@ -737,7 +737,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {                                                               \
         auto base = get_next_reg_from_cs(arm);                      \
         std::vector<ARMReg> receive_regs;                           \
-        for (int i = 1; i < arm->op_count; i++)                     \
+        for (int i = 0; i < arm->op_count; i++)                     \
         {                                                           \
             receive_regs.push_back(get_next_reg_from_cs(arm));      \
         }                                                           \
@@ -750,7 +750,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {                                                               \
         auto base = get_next_reg_from_cs(arm);                      \
         std::vector<ARMReg> source_regs;                            \
-        for (int i = 1; i < arm->op_count; i++)                     \
+        for (int i = 0; i < arm->op_count; i++)                     \
         {                                                           \
             source_regs.push_back(get_next_reg_from_cs(arm));      \
         }                                                                                                              \
@@ -767,6 +767,34 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     DECLARE_STM_BASE(STM, true, false)
     DECLARE_STM_BASE(STMDA, false, false)
     DECLARE_STM_BASE(STMDB, false, true)
+
+    case ARM_INS_PUSH:
+    {
+        auto base = ARMReg::R13;                      
+        std::vector<ARMReg> source_regs;                            
+        for (int i = 0; i < arm->op_count; i++)                     
+        {                                                           
+            source_regs.push_back(get_next_reg_from_cs(arm));      
+        }                             
+
+        recompiler->gen_arm32_stm(base, &source_regs[0], source_regs.size(), false, true, true);
+
+        break;
+    }
+
+    case ARM_INS_POP:
+    {
+        auto base = ARMReg::R13;
+        std::vector<ARMReg> dest_regs;
+        for (int i = 0; i < arm->op_count; i++)
+        {
+            dest_regs.push_back(get_next_reg_from_cs(arm));
+        }
+
+        recompiler->gen_arm32_ldm(base, &dest_regs[0], dest_regs.size(), false, false, true);
+
+        break;
+    }
 
     DECLARE_ALU_BASE(STR, str)
     DECLARE_ALU_BASE(STRB, strb)
@@ -2092,7 +2120,7 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
     }
 
     // If ascending, each time stored, add it by 4
-    int add_offset = (ascending ? 4 : -4);
+    int move_offset = 4;
     
     // Don't need to spilllock
     for (int i = 0; i < count; i++)
@@ -2102,8 +2130,10 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
 
         if (inc_before)
         {
-            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+            ascending ? block->ADD(ARMReg::R1, ARMReg::R1, move_offset) : block->SUB(R1, R1, move_offset);
         }
+
+        block->PUSH(4, R1, R2, R3, R4);
 
         // Don't waste time moving if the mapped register is already r2
         // Calling this before storing all arguments so that if the mapped register is r0, the value
@@ -2116,9 +2146,11 @@ void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
 
         block->BL(ARMReg::R14);
 
+        block->POP(4, R1, R2, R3, R4);
+
         if (!inc_before)
         {
-            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+            ascending ? block->ADD(ARMReg::R1, ARMReg::R1, move_offset) : block->SUB(R1, R1, move_offset);
         }
     }
 
@@ -2146,9 +2178,9 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
     std::vector<ARMReg> mapped_regs;
     
     bool should_move_new_addr = write_back;
-
+    
     // Don't need to spilllock
-    for (int i = count - 1; i >= 0; i--)
+    for (int i = 0; i < count; i++)
     {
         ARMReg mapped_reg = remap_arm_reg(target[i]);
         assert(mapped_reg != INVALID_REG);
@@ -2162,6 +2194,8 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
         list.remove_reg(mapped_reg);
     }
 
+    block->preserve(list);
+
     if (base == R_PC)
     {
         // Must assert that it's not requesting writeback
@@ -2174,23 +2208,30 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
     }
 
     // If ascending, each time loaded, add it by -4
-    int add_offset = (ascending ? -4 : 4);
+    int move_offset = 4;
     
     bool should_r1_loaded_from_garbage = false;
+    bool should_r0_loaded_from_garbage = false;
+
     bool should_gen_block_link = false;
 
     for (const auto &mapped_reg: mapped_regs)
     {
         if (inc_before)
         {
-            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+            ascending ? block->SUB(R1, R1, move_offset) : block->ADD(ARMReg::R1, ARMReg::R1, move_offset);
         }
+
+        // Preserve R1 (add offset), and some other registers (for read call)
+        block->PUSH(4, R1, R2, R3, R4);
 
         // Hey, calling store on this.
         block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
-        block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.write_mem32));
+        block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.read_mem32));
 
         block->BL(ARMReg::R14);
+
+        block->POP(4, R1, R2, R3, R4);
 
         // Hey moving
         switch (mapped_reg)
@@ -2208,6 +2249,10 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
 
         case ARMReg::R0:
         {
+            // This is also really not epoc
+            should_r0_loaded_from_garbage = true;
+            block->STR(ARMReg::R0, JIT_STATE_REG, offsetof(jit_state, gar) + sizeof(std::uint32_t), true);
+
             break;
         }
 
@@ -2230,7 +2275,7 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
 
         if (!inc_before)
         {
-            block->ADD(ARMReg::R1, ARMReg::R1, add_offset);
+            ascending ? block->SUB(R1, R1, move_offset) : block->ADD(ARMReg::R1, ARMReg::R1, move_offset);
         }
     }
 
@@ -2244,6 +2289,7 @@ void arm_recompiler::gen_arm32_ldm(ArmGen::ARMReg base, ArmGen::ARMReg *target, 
     block->return_back_what_preserved(list);
 
     should_r1_loaded_from_garbage ? block->LDR(ARMReg::R1, JIT_STATE_REG, offsetof(jit_state, gar), true) : 0;
+    should_r0_loaded_from_garbage ? block->LDR(ARMReg::R0, JIT_STATE_REG, offsetof(jit_state, gar) + sizeof(std::uint32_t), true) : 0;
     should_gen_block_link ? gen_block_link() : 0;
 
     allocator.release_spill_lock(base);
@@ -2289,6 +2335,8 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
         }
     }
     
+    block->PUSH(4, R1, R2, R3, R4);
+
     // Move this first.
     mapped_source_reg != ARMReg::R2 ? block->MOV(ARMReg::R2, mapped_source_reg) : 0;
 
@@ -2297,6 +2345,8 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     block->MOV(ARMReg::R1, ARMReg::R4);
 
     block->BL(ARMReg::R14);
+
+    block->POP(4, R1, R2, R3, R4);
 
     if (write_back)
     {
@@ -2395,7 +2445,9 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
             block->ADD(ARMReg::R4, ARMReg::R4, remap_operand2(op));
         }
     }
-    
+
+    block->PUSH(4, R1, R2, R3, R4);
+
     // Nice, we now got the address in R1, let's move the userdata to r0,
     // function pointer in r14 and branch.
     block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
@@ -2403,7 +2455,9 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
 
     block->BL(ARMReg::R14);
-    
+
+    block->POP(4, R1, R2, R3, R4);
+
     // We got the value in r0!
     block->MOV(mapped_dest_reg, ARMReg::R0);
 

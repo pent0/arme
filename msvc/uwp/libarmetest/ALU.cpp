@@ -160,19 +160,35 @@ TEST_CASE("STM/LDM (descending + FD)")
     jit->state.regs[14] = 1024;
     jit->state.regs[13] = 2040;
 
+    jit->state.regs[4] = 25367;
+    jit->state.regs[5] = 908743;
+    jit->state.regs[6] = 111111;
+    jit->state.regs[7] = 1244212;
+
     write_memory32(&cbd, 2052, 156);
     write_memory32(&cbd, 2048, 12);
     write_memory32(&cbd, 2044, 2055);
     write_memory32(&cbd, 2040, 10424);
 
     write_memory32(&cbd, 1024, 0xE8BD000F);     // LDMFD SP!, { R0 - R3 }
-    write_memory32(&cbd, 1028, 0xE12FFF1E);     // BX LR
+    write_memory32(&cbd, 1028, 0xE92D00F0);     // STMFD SP!, { R4 - R7 }
+    write_memory32(&cbd, 1032, 0xE12FFF1E);     // BX LR
 
     jit->execute();
+
+    std::uint32_t a1 = read_memory32(&cbd, 2052);
+    std::uint32_t a2 = read_memory32(&cbd, 2048); 
+    std::uint32_t a3 = read_memory32(&cbd, 2044);
+    std::uint32_t a4 = read_memory32(&cbd, 2040);
 
     REQUIRE(jit->state.regs[0] == 10424);
     REQUIRE(jit->state.regs[1] == 2055);
     REQUIRE(jit->state.regs[2] == 12);
     REQUIRE(jit->state.regs[3] == 156);
-    REQUIRE(jit->state.regs[13] == 2056);
+    REQUIRE(jit->state.regs[13] == 2040);
+
+    REQUIRE(a1 == jit->state.regs[4]);
+    REQUIRE(a2 == jit->state.regs[5]);
+    REQUIRE(a3 == jit->state.regs[6]);
+    REQUIRE(a4 == jit->state.regs[7]);
 }
