@@ -1482,62 +1482,6 @@ void arm_recompiler::set_pc(const std::uint32_t off, bool exchange)
     block->POP(1, ARMReg::R4);
 }
 
-void arm_recompiler::begin_gen_cpsr_update()
-{
-    block->PUSH(4, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7);
-    block->LDR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
-    block->MOV(ARMReg::R6, ARMReg::R4);
-}
-
-void arm_recompiler::end_gen_cpsr_update()
-{
-    block->STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
-    block->POP(4, ARMReg::R4, ARMReg::R5, ARMReg::R6, ARMReg::R7);
-}
-
-void arm_recompiler::gen_cpsr_update_c_flag()
-{
-    // Use this to clear bit 29
-    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 29));
-
-    block->SetCC(CCFlags::CC_CS);
-    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 29));
-    block->SetCC(CCFlags::CC_AL);
-}
-
-void arm_recompiler::gen_cpsr_update_z_flag()
-{
-    // Use this to clear bit 30
-    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 30));
-
-    // Z flag is set, we will ORR.
-    block->SetCC(CCFlags::CC_EQ);
-    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 30));
-    block->SetCC(CCFlags::CC_AL);
-}
-
-void arm_recompiler::gen_cpsr_update_n_flag()
-{
-    // Use this to clear bit 31
-    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 31));
-
-    // N flag is set (negative), we will ORR.
-    block->SetCC(CCFlags::CC_MI);
-    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 31));
-    block->SetCC(CCFlags::CC_AL);
-}
-
-void arm_recompiler::gen_cpsr_update_v_flag()
-{
-    // Use this to clear bit 28
-    block->BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 28));
-
-    // V flag is set (overflow), we will ORR.
-    block->SetCC(CCFlags::CC_VS);
-    block->ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 28));
-    block->SetCC(CCFlags::CC_AL);
-}
-
 void arm_recompiler::gen_arm32_mov(ARMReg reg, Operand2 op)
 {
     auto new_dest_reg = remap_arm_reg(reg);
@@ -1556,30 +1500,14 @@ void arm_recompiler::gen_arm32_tst(ARMReg reg, Operand2 op)
 {
     auto new_dest_reg = remap_arm_reg(reg);
     block->TST(new_dest_reg, remap_operand2(op));
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_teq(ARMReg reg, Operand2 op)
 {
     auto new_dest_reg = remap_arm_reg(reg);
     block->TEQ(new_dest_reg, remap_operand2(op));
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::begin_valid_condition_block(CCFlags cond)
@@ -1598,6 +1526,14 @@ void arm_recompiler::begin_valid_condition_block(CCFlags cond)
     {
     case CC_EQ:
     {
+        /*
+        block->PUSH(6,R0, R4, R5, R6, R7, R14);
+        block->MOV(R0, R4);
+        block->MOVI2R(R14, (u32)callback.dummy);
+        block->BL(R14);
+        block->POP(6,R0, R4, R5, R6, R7, R14);
+        */
+
         // Zero flag
         block->TST(R4, encode_imm(1 << 30));
         block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
@@ -1681,6 +1617,7 @@ void arm_recompiler::begin_valid_condition_block(CCFlags cond)
     case CC_GE:
     {
         block->AND(R4, R4, encode_imm((1 << 31) | (1 << 28)));
+        block->CMP(R4, 0);
         block->B_CC_L(CC_EQ, cond_success_label);
         block->CMP(R4, encode_imm((1 << 31) | (1 << 28)));
         block->B_CC_L(CC_EQ, cond_success_label);
@@ -1821,29 +1758,13 @@ void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
         allocator.release_all_spill_lock();
 
         block->ADD(remap_arm_reg(reg1), source1, source2);
-
-        begin_gen_cpsr_update();
-
-        gen_cpsr_update_n_flag();
-        gen_cpsr_update_c_flag();
-        gen_cpsr_update_z_flag();
-        gen_cpsr_update_v_flag();
-
-        end_gen_cpsr_update();
+        block->emit_cpsr_update_flags();
 
         return;
     }
 
     block->ADD(remap_arm_reg(reg1), remap_arm_reg(reg2), op);
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
@@ -1875,57 +1796,25 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
 
         allocator.release_all_spill_lock();
         block->SUB(remap_arm_reg(reg1), source1, source2);
-
-        begin_gen_cpsr_update();
-
-        gen_cpsr_update_n_flag();
-        gen_cpsr_update_c_flag();
-        gen_cpsr_update_z_flag();
-        gen_cpsr_update_v_flag();
-
-        end_gen_cpsr_update();
+        block->emit_cpsr_update_flags();
 
         return;
     }
 
     block->SUB(remap_arm_reg(reg1), remap_arm_reg(reg2), op);
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_cmp(ARMReg reg1, Operand2 op)
 {
     block->CMP(remap_arm_reg(reg1), remap_operand2(op));
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_cmn(ARMReg reg1, Operand2 op)
 {
     block->CMN(remap_arm_reg(reg1), remap_operand2(op));
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 // R15 can't be used
@@ -1937,15 +1826,7 @@ void arm_recompiler::gen_arm32_mul(ARMReg reg1, ARMReg reg2, ARMReg reg3)
     block->MUL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_arm_reg(reg3));
 
     allocator.release_all_spill_lock();
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 // TODO: gen MLA + MLS
@@ -1959,15 +1840,7 @@ void arm_recompiler::gen_arm32_umull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_umulal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
@@ -1980,15 +1853,7 @@ void arm_recompiler::gen_arm32_umulal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARM
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_smull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
@@ -2001,15 +1866,7 @@ void arm_recompiler::gen_arm32_smull(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }    
 
 void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMReg reg4)
@@ -2022,15 +1879,7 @@ void arm_recompiler::gen_arm32_smlal(ARMReg reg1, ARMReg reg2, ARMReg reg3, ARMR
         , remap_arm_reg(reg4));
 
     allocator.release_all_spill_lock();
-
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_bic(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
@@ -2048,14 +1897,7 @@ void arm_recompiler::gen_arm32_bic(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Arm
         allocator.release_all_spill_lock();
     }
 
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_and(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
@@ -2073,14 +1915,7 @@ void arm_recompiler::gen_arm32_and(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Arm
         allocator.release_all_spill_lock();
     }
 
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_orr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op)
@@ -2098,14 +1933,7 @@ void arm_recompiler::gen_arm32_orr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Arm
         allocator.release_all_spill_lock();
     }
 
-    begin_gen_cpsr_update();
-
-    gen_cpsr_update_n_flag();
-    gen_cpsr_update_c_flag();
-    gen_cpsr_update_z_flag();
-    gen_cpsr_update_v_flag();
-
-    end_gen_cpsr_update();
+    block->emit_cpsr_update_flags();
 }
 
 void arm_recompiler::gen_arm32_stm(ArmGen::ARMReg base, ArmGen::ARMReg *target, const int count, bool ascending,
@@ -2562,9 +2390,51 @@ void arm_recompiler::gen_block_link()
 // Let's generate the dispatcher code
 void arm_recompile_block::gen_run_code()
 {
-    run_code = get_func_as<run_code_func>();
     BeginWrite();
+    cpsr_update_flags = get_func_as<cpsr_update_flags_func>();
 
+    ARMABI_save_all_registers();
+
+    LDR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
+    MOV(ARMReg::R6, ARMReg::R4);
+
+    // Use this to clear bit 29
+    BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 29));
+
+    SetCC(CCFlags::CC_CS);
+    ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 29));
+    SetCC(CCFlags::CC_AL);
+
+    // Use this to clear bit 30
+    BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 30));
+
+    // Z flag is set, we will ORR.
+    SetCC(CCFlags::CC_EQ);
+    ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 30));
+    SetCC(CCFlags::CC_AL);
+
+    // Use this to clear bit 31
+    BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 31));
+
+    // N flag is set (negative), we will ORR.
+    SetCC(CCFlags::CC_MI);
+    ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 31));
+    SetCC(CCFlags::CC_AL);
+
+    // Use this to clear bit 28
+    BIC(ARMReg::R4, ARMReg::R4, encode_imm(1 << 28));
+
+    // V flag is set (overflow), we will ORR.
+    SetCC(CCFlags::CC_VS);
+    ORR(ARMReg::R4, ARMReg::R4, encode_imm(1 << 28));
+    SetCC(CCFlags::CC_AL);
+
+    STR(ARMReg::R4, JIT_STATE_REG, offsetof(jit_state, cpsr), true);
+    ARMABI_load_all_registers();
+
+    B(R_LR);
+
+    run_code = get_func_as<run_code_func>();
     ARMABI_save_all_registers();
 
     // The JIT state is passed to the current block

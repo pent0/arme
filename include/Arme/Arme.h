@@ -395,7 +395,10 @@ private:
     jit_state_information     jsi;
 
     typedef void (*run_code_func)(void*);
-    run_code_func     run_code;
+    typedef void (*cpsr_update_flags_func)();
+
+    run_code_func          run_code;
+    cpsr_update_flags_func cpsr_update_flags;
 
 public:
     explicit arm_recompile_block(jit_state &state, jit_callback &cb, jit_runtime_callback &rt_cb
@@ -448,6 +451,11 @@ public:
     void do_run_code(void *jit_state)
     {
         run_code(jit_state);
+    }
+
+    void emit_cpsr_update_flags()
+    {
+        ARMABI_call_function(cpsr_update_flags);
     }
 };
 
@@ -512,18 +520,10 @@ struct arm_recompiler
     void gen_arm32_bx(ArmGen::Operand2 op);
     void gen_arm32_blx(ArmGen::Operand2 op);
 
-    void begin_gen_cpsr_update();
-    void end_gen_cpsr_update();
-
     void save_pc_from_visitor();
 
     void set_pc(ArmGen::ARMReg reg, bool exchange = false);
     void set_pc(const std::uint32_t off, bool exchange = false);
-
-    void gen_cpsr_update_c_flag();
-    void gen_cpsr_update_z_flag();
-    void gen_cpsr_update_n_flag();
-    void gen_cpsr_update_v_flag();
 
     void gen_arm32_mov(ArmGen::ARMReg reg, ArmGen::Operand2 op);
     void gen_arm32_mvn(ArmGen::ARMReg reg, ArmGen::Operand2 op);
