@@ -98,3 +98,19 @@ int main()
     assert((dejit.state.regs[0] == 3) && "Unexpected value");
 }
 ```
+
+The JIT supported the following architecture:
+- Guest: ARMv4, ARMv3
+- Host: ARMv5 and upper
+
+Support:
+- Low level exception handling: specify the exception base address in jit state.
+- Varies of function callback: writing callback function in static C function with userdata available!
+- Switching execution mode: between SVC, ABT etc
+
+Limitation:
+- Not cycle accurate
+- Code generation not optimized
+
+Speed should be x3 - x5 faster than interpreter in many cases (tested on Nokia Lumia 525 Win10 Mobile).
+Instructions WIP, CP opcode not finish yet.
