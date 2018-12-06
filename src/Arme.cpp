@@ -44,6 +44,12 @@ static Operand2 encode_imm(std::uint32_t val)
     return val;
 }
 
+static std::uint32_t decode_imm12mod(Operand2 op)
+{
+    assert(op.GetType() == TYPE_IMM);
+    return ROR(op.GetRawValue(), op.GetRotation() * 2);
+}
+
 #pragma region ANALYST
 
 void arm_analyst::init()
@@ -72,6 +78,11 @@ cs_insn *arm_analyst::disassemble_instructions(const address addr, bool thumb)
     auto count = cs_disasm(handle, reinterpret_cast<const std::uint8_t*>(&op), thumb ? 2 : 4, addr, 1,
         &insn);
 
+    if (!insn)
+    {
+        const char *err = cs_strerror(cs_errno(handle));
+        int a = 5;
+    }
     return insn;
 }
 
@@ -631,6 +642,34 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     DECLARE_ALU_CALC(ORR, orr)
     DECLARE_ALU_CALC(BIC, bic)
 
+    case ARM_INS_LSR:
+    {
+        auto dest = get_next_reg_from_cs(arm);
+
+        // The next operand is ARM_OP_LSR
+        ARMReg source_reg = cs_arm_reg_to_reg(static_cast<arm_reg>(arm->operands[op_counter].reg));
+        Operand2 op = (arm->operands[op_counter].shift.type == arm_shifter::ARM_SFT_LSR_REG) ?
+            cs_arm_reg_to_reg(static_cast<arm_reg>(arm->operands[op_counter].shift.value)) :
+            encode_imm(arm->operands[op_counter].shift.value);
+
+        recompiler->gen_arm32_lsr(dest, source_reg, op);
+        break;
+    }
+
+    case ARM_INS_LSL:
+    {
+        auto dest = get_next_reg_from_cs(arm);
+
+        // The next operand is ARM_OP_LSR
+        ARMReg source_reg = cs_arm_reg_to_reg(static_cast<arm_reg>(arm->operands[op_counter].reg));
+        Operand2 op = (arm->operands[op_counter].shift.type == arm_shifter::ARM_SFT_LSL_REG) ?
+            cs_arm_reg_to_reg(static_cast<arm_reg>(arm->operands[op_counter].shift.value)) :
+            encode_imm(arm->operands[op_counter].shift.value);
+
+        recompiler->gen_arm32_lsl(dest, source_reg, op);
+        break;
+    }
+
     case ARM_INS_MSR:
     {
         // Skip through op1
@@ -677,14 +716,14 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     case ARM_INS_BL:
     {
         recompiler->gen_arm32_bl(arm->operands[op_counter].imm);
-        should_break = false;
+        should_break = true;
         break;
     }
 
     case ARM_INS_BLX:
     {
         recompiler->gen_arm32_blx(get_next_op_from_cs(arm));
-        should_break = false;
+        should_break = true;
         break;
     }
 
@@ -740,7 +779,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {                                                               \
         auto base = get_next_reg_from_cs(arm);                      \
         std::vector<ARMReg> receive_regs;                           \
-        for (int i = 0; i < arm->op_count; i++)                     \
+        for (int i = 0; i < arm->op_count - 1; i++)                     \
         {                                                           \
             receive_regs.push_back(get_next_reg_from_cs(arm));      \
         }                                                           \
@@ -753,7 +792,7 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     {                                                               \
         auto base = get_next_reg_from_cs(arm);                      \
         std::vector<ARMReg> source_regs;                            \
-        for (int i = 0; i < arm->op_count; i++)                     \
+        for (int i = 0; i < arm->op_count - 1; i++)                     \
         {                                                           \
             source_regs.push_back(get_next_reg_from_cs(arm));      \
         }                                                                                                              \
@@ -799,6 +838,14 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         break;
     }
 
+    case ARM_INS_SVC:
+    {
+        auto ord = arm->operands[op_counter].imm;
+        recompiler->gen_arm32_svc(ord);
+
+        break;
+    }
+
     DECLARE_ALU_BASE(STR, str)
     DECLARE_ALU_BASE(STRB, strb)
     DECLARE_ALU_BASE(STRH, strh)
@@ -820,6 +867,14 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     
     loc = loc.advance(insn->size);
     last = std::string(insn->mnemonic) + " " + insn->op_str;
+    
+    /*
+    std::wstring a(last.begin(), last.end());
+    a += L' ';
+    a += std::to_wstring(get_current_visiting_pc());
+    a += L'\n';
+    OutputDebugString(a.c_str());
+    */
 
     cycles_count++;
     cycles_count_since_last_cond++;
@@ -1046,7 +1101,111 @@ void arm_recompile_block::ARMABI_call_function_cc(void *func, std::uint32_t arg1
     POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);   
 }
 
+void arm_recompile_block::ARMABI_call_function_ccc(void *func, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3)
+{
+    PUSH(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);
+    MOVI2R(ARMReg::R14, reinterpret_cast<u32>(func));
+    MOVI2R(ARMReg::R0, arg1);
+    MOVI2R(ARMReg::R1, arg2);
+    MOVI2R(ARMReg::R2, arg3);
+    BL(ARMReg::R14);
+    POP(5, ARMReg::R0, ARMReg::R1, ARMReg::R2, ARMReg::R3, ARMReg::R_LR);
+}
+
 #pragma endregion
+
+static void do_mode_swapping(void *rawstate, std::uint32_t oldpsr, std::uint32_t psr)
+{
+    jit_state *state = reinterpret_cast<jit_state*>(rawstate);
+
+    if ((psr & 0x1F) == (oldpsr & 0x1F))
+    {
+        return;
+    }
+
+    u32 temp;
+#define SWAP(a, b)  temp = a; a = b; b = temp;
+
+    switch (oldpsr & 0x1F)
+    {
+    case 0x11:
+        SWAP(state->regs[8], state->fiq[0]);
+        SWAP(state->regs[9], state->fiq[1]);
+        SWAP(state->regs[10], state->fiq[2]);
+        SWAP(state->regs[11], state->fiq[3]);
+        SWAP(state->regs[12], state->fiq[4]);
+        SWAP(state->regs[13], state->fiq[5]);
+        SWAP(state->regs[14], state->fiq[6]);
+        break;
+
+    case 0x12:
+        SWAP(state->regs[13], state->irq[0]);
+        SWAP(state->regs[14], state->irq[1]);
+        break;
+
+    case 0x13:
+        SWAP(state->regs[13], state->svc[0]);
+        SWAP(state->regs[14], state->svc[1]);
+        break;
+
+    case 0x17:
+        SWAP(state->regs[13], state->abt[0]);
+        SWAP(state->regs[14], state->abt[1]);
+        break;
+
+    case 0x1B:
+        SWAP(state->regs[13], state->und[0]);
+        SWAP(state->regs[14], state->und[1]);
+        break;
+
+    default:
+    {
+        // assert(false);
+        break;
+    }
+    }
+
+    switch (state->cpsr & 0x1F)
+    {
+    case 0x11:
+        SWAP(state->regs[8], state->fiq[0]);
+        SWAP(state->regs[9], state->fiq[1]);
+        SWAP(state->regs[10], state->fiq[2]);
+        SWAP(state->regs[11], state->fiq[3]);
+        SWAP(state->regs[12], state->fiq[4]);
+        SWAP(state->regs[13], state->fiq[5]);
+        SWAP(state->regs[14], state->fiq[6]);
+        break;
+
+    case 0x12:
+        SWAP(state->regs[13], state->irq[0]);
+        SWAP(state->regs[14], state->irq[1]);
+        break;
+
+    case 0x13:
+        SWAP(state->regs[13], state->svc[0]);
+        SWAP(state->regs[14], state->svc[1]);
+        break;
+
+    case 0x17:
+        SWAP(state->regs[13], state->abt[0]);
+        SWAP(state->regs[14], state->abt[1]);
+        break;
+
+    case 0x1B:
+        SWAP(state->regs[13], state->und[0]);
+        SWAP(state->regs[14], state->und[1]);
+        break;
+
+    default:
+    {
+        // assert(false);
+        break;
+    }
+
+#undef SWAP
+    }
+}
 
 static void update_cpsr_mode(void *rawstate, std::uint8_t sysreg, std::uint32_t val, std::uint32_t mask)
 {
@@ -1104,86 +1263,7 @@ static void update_cpsr_mode(void *rawstate, std::uint8_t sysreg, std::uint32_t 
 
     if (sysreg == 0)
     {
-        u32 temp;
-        #define SWAP(a, b)  temp = a; a = b; b = temp;
-
-        switch (oldpsr & 0x1F)
-        {
-        case 0x11:
-            SWAP(state->regs[8], state->fiq[0]);
-            SWAP(state->regs[9], state->fiq[1]);
-            SWAP(state->regs[10], state->fiq[2]);
-            SWAP(state->regs[11], state->fiq[3]);
-            SWAP(state->regs[12], state->fiq[4]);
-            SWAP(state->regs[13], state->fiq[5]);
-            SWAP(state->regs[14], state->fiq[6]);
-            break;
-
-        case 0x12:
-            SWAP(state->regs[13], state->irq[0]);
-            SWAP(state->regs[14], state->irq[1]);
-            break;
-
-        case 0x13:
-            SWAP(state->regs[13], state->svc[0]);
-            SWAP(state->regs[14], state->svc[1]);
-            break;
-
-        case 0x17:
-            SWAP(state->regs[13], state->abt[0]);
-            SWAP(state->regs[14], state->abt[1]);
-            break;
-
-        case 0x1B:
-            SWAP(state->regs[13], state->und[0]);
-            SWAP(state->regs[14], state->und[1]);
-            break;
-
-        default:
-        {
-            assert(false);
-            break;
-        }
-        }
-
-        switch (state->cpsr & 0x1F)
-        {
-        case 0x11:
-            SWAP(state->regs[8], state->fiq[0]);
-            SWAP(state->regs[9], state->fiq[1]);
-            SWAP(state->regs[10], state->fiq[2]);
-            SWAP(state->regs[11], state->fiq[3]);
-            SWAP(state->regs[12], state->fiq[4]);
-            SWAP(state->regs[13], state->fiq[5]);
-            SWAP(state->regs[14], state->fiq[6]);
-            break;
-
-        case 0x12:
-            SWAP(state->regs[13], state->irq[0]);
-            SWAP(state->regs[14], state->irq[1]);
-            break;
-
-        case 0x13:
-            SWAP(state->regs[13], state->svc[0]);
-            SWAP(state->regs[14], state->svc[1]);
-            break;
-
-        case 0x17:
-            SWAP(state->regs[13], state->abt[0]);
-            SWAP(state->regs[14], state->abt[1]);
-            break;
-
-        case 0x1B:
-            SWAP(state->regs[13], state->und[0]);
-            SWAP(state->regs[14], state->und[1]);
-            break;
-
-        default:
-        {
-            assert(false);
-            break;
-        }
-        }
+        do_mode_swapping(state, oldpsr, *psr);
     }
 }
 
@@ -1290,24 +1370,17 @@ void arm_recompiler::gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t
 {
     ARMReg mapped_source = remap_arm_reg(rs);
 
-    // Flush all registers usage till this point
-    flush();
-
     block->PUSH(5, R0, R1, R2, R3, R14);
 
     block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
-    block->MOVI2R(ARMReg::R2, (crn << 8) | (crn << 4) | op1);
-    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.cp_read));
+    block->MOVI2R(ARMReg::R2, (crn << 8) | (crm << 4) | op1);
+    block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.cp_write));
     block->MOVI2R(ARMReg::R1, coproc);
     mapped_source != R3 ? block->MOV(ARMReg::R3, mapped_source) : 0;
 
     block->BL(ARMReg::R14);
 
     block->POP(5, R0, R1, R2, R3, R14);
-
-    // Load new SP and LR, R switching will be dynamiclly load later
-    block->LDR(remap_arm_reg(R_LR), JIT_STATE_REG, offsetof(jit_state, regs) + R_LR * sizeof(std::uint32_t));
-    block->LDR(remap_arm_reg(R_SP), JIT_STATE_REG, offsetof(jit_state, regs) + R_SP * sizeof(std::uint32_t));
 }
 
 void arm_recompiler::gen_arm32_msr(Operand2 op)
@@ -1322,6 +1395,9 @@ void arm_recompiler::gen_arm32_msr(Operand2 op)
 
     if (!(inst & (1 << 22)))
         mask &= 0xFFFFFFDF;
+
+    // Flush all registers usage till this point
+    flush();
 
     block->PUSH(5, R0, R1, R2, R3, R14); 
     block->MOV(R2, remap_operand2(op));
@@ -1350,6 +1426,10 @@ void arm_recompiler::gen_arm32_msr(Operand2 op)
 
     block->BL(R14);
     block->POP(5, R0, R1, R2, R3, R14);
+
+    // Load new SP and LR, R switching will be dynamiclly load later
+    block->LDR(remap_arm_reg(R_LR), JIT_STATE_REG, offsetof(jit_state, regs) + R_LR * sizeof(std::uint32_t));
+    block->LDR(remap_arm_reg(R_SP), JIT_STATE_REG, offsetof(jit_state, regs) + R_SP * sizeof(std::uint32_t));
 }
 
 void arm_recompiler::gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t op1,
@@ -1376,7 +1456,7 @@ void arm_recompiler::gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t
         block->PUSH(4, R0, R1, R2, R14);
         break;
     }
-
+    
     block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
     block->MOVI2R(ARMReg::R2, (crn << 8) | (crn << 4) | op1);
     block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.cp_read));
@@ -1413,6 +1493,50 @@ void arm_recompiler::gen_arm32_mrc(const std::uint8_t coproc, const std::uint8_t
         block->POP(4, R0, R1, R2, R14);
         break;
     }
+}
+
+void arm_recompiler::gen_arm32_svc(const std::uint32_t ord)
+{
+    if (callback.interrupt_handler)
+    {
+        block->ARMABI_call_function_ccc(callback.interrupt_handler, (u32)callback.userdata,
+            (u32)interrupt_type::supervisor_call, ord);
+
+        return;
+    }
+
+    preserve_list list{ R4, R5, R14 };
+    block->preserve(list);
+
+    block->LDR(R4, JIT_STATE_REG, offsetof(jit_state, cpsr));
+    block->MOV(R5, R4);
+    block->BIC(R4, R4, encode_imm(0xFF));
+    block->ORR(R4, R4, encode_imm(0xD3));
+
+    block->PUSH(3, R0, R1, R2);
+
+    block->MOV(R0, JIT_STATE_REG);
+    block->MOV(R1, R5);
+    block->MOV(R2, R4);
+    block->MOVI2R(R14, (u32)(do_mode_swapping));
+
+    block->BL(R14);
+
+    block->POP(3, R0, R1, R2);
+
+    block->STR(R5, JIT_STATE_REG, offsetof(jit_state, svc[2]));
+    
+    // AAAAAAAAAA
+    block->MOVI2R(remap_arm_reg(R_LR), visitor.get_current_pc() - visitor.is_thumb() ? 3 : 4);
+
+    // Avoid using R0. The parameter may be return or not.
+    block->LDR(R4, JIT_STATE_REG, offsetof(jit_state, exception_base));
+    block->ADD(R4, R4, 8);
+
+    set_pc(R4);
+    gen_block_link();
+
+    block->return_back_what_preserved(list);
 }
 
 void arm_recompiler::save_pc_from_visitor()
@@ -1583,6 +1707,22 @@ void arm_recompiler::begin_valid_condition_block(CCFlags cond)
         break;
     }
 
+    case CC_CS:
+    {
+        block->TST(R4, encode_imm(1 << 29));
+        block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
+
+        break;
+    }
+
+    case CC_CC:
+    {
+        block->TST(R4, encode_imm(1 << 29));
+        block->B_CC_L(CCFlags::CC_NEQ, cond_success_label);
+
+        break;
+    }
+
     case CC_HI:
     {
         block->AND(R4, R4, encode_imm((1 << 30) | (1 << 29)));
@@ -1703,7 +1843,9 @@ void arm_recompiler::gen_arm32_bx(ArmGen::Operand2 op)
     }
     else
     {
-        set_pc(op.GetData(), true);
+        assert(op.GetType() == TYPE_IMM);
+
+        set_pc(decode_imm12mod(op), true);
         gen_block_link();
     }
 }
@@ -1723,9 +1865,39 @@ void arm_recompiler::gen_arm32_blx(ArmGen::Operand2 op)
     }
     else
     {
-        set_pc(op.GetData());
+        assert(op.GetType() == TYPE_IMM);
+
+        set_pc(decode_imm12mod(op));
         gen_block_link();
     }
+}
+
+void arm_recompiler::gen_arm32_lsr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Operand2 op)
+{
+    assert((reg1 != R_PC) && (reg2 != R_PC));
+    allocator.spill_lock(reg2);
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(static_cast<ARMReg>(op.GetData()));
+    }
+
+    block->LSR(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_operand2(op));
+    allocator.release_all_spill_lock();
+}
+
+void arm_recompiler::gen_arm32_lsl(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, Operand2 op)
+{
+    assert((reg1 != R_PC) && (reg2 != R_PC));
+    allocator.spill_lock(reg2);
+
+    if (op.GetType() == TYPE_REG)
+    {
+        allocator.spill_lock(static_cast<ARMReg>(op.GetData()));
+    }
+
+    block->LSL(remap_arm_reg(reg1), remap_arm_reg(reg2), remap_operand2(op));
+    allocator.release_all_spill_lock();
 }
 
 void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
@@ -1736,7 +1908,7 @@ void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
         {
             // Add them right away, and move this value to destination
             // register
-            std::uint32_t val = visitor.get_current_pc() + op.GetData();
+            std::uint32_t val = visitor.get_current_pc() + decode_imm12mod(op);
             block->MOVI2R(reg1, val);
 
             return;
@@ -1775,7 +1947,7 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
         {
             // Add them right away, and move this value to destination
             // register
-            std::uint32_t val = visitor.get_current_pc() - op.GetData();
+            std::uint32_t val = visitor.get_current_pc() - +decode_imm12mod(op);
             block->MOVI2R(reg1, val);
         }
         else
@@ -2227,10 +2399,11 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
     if (base == ARMReg::R_PC)
     {
         std::uint32_t addr = visitor.get_current_pc();
+        std::uint32_t data = decode_imm12mod(op);
 
         if (!post_indexed)
         {
-            addr += subtract ? -(s32)op.Imm12() : op.Imm12();
+            addr += (subtract ? -(s32)data : data);
         }
 
         // Read memory right away
@@ -2514,6 +2687,12 @@ block_descriptor arm_recompiler::recompile(address addr)
     block->ARMABI_call_function(callback.dummy);
     */
 
+    block->MOVI2R(R0, (u32)block->jit_rt_callback.userdata);
+    block->MOVI2R(R14, (u32)block->jit_rt_callback.get_current_visitor_pc_func);
+
+    block->BL(R14);
+    block->STR(R0, JIT_STATE_REG, block->jsi.offset_reg + R_PC * sizeof(std::uint32_t));
+
     block->ARMABI_load_all_registers();
     block->B(ARMReg::R14);
     
@@ -2552,6 +2731,7 @@ jit::jit(jit_callback callback)
 {
     runtime_callback.userdata = this;
     runtime_callback.get_next_block_addr = get_next_block_addr_jit;
+    runtime_callback.get_current_visitor_pc_func = get_current_visitor_pc;
 
     block.set_runtime_callback(runtime_callback);
     block.gen_run_code();
@@ -2566,6 +2746,12 @@ code_ptr jit::get_next_block_addr(void *userdata)
     des.cpsr = j->state.cpsr;
 
     return j->recompiler.get_next_block(des).entry_point;
+}
+
+address  jit::get_current_visitor_pc(void *userdata)
+{
+    jit *j = reinterpret_cast<jit*>(userdata);
+    return j->recompiler.visitor.get_current_visiting_pc();
 }
 
 void jit::execute()

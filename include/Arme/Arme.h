@@ -19,6 +19,12 @@ struct cs_arm;
 namespace arme
 {
  
+enum interrupt_type
+{
+    unknown_inst,
+    supervisor_call
+};
+
 using address = std::uint32_t;
 using code_ptr = const void*;
 
@@ -39,6 +45,8 @@ typedef void                     (*cp_write_func)(void*, std::uint8_t, std::uint
 
 typedef void                     (*dummy_func)(void*);
 typedef read_mem32_func            read_code32_func;
+
+typedef void (*interrupt_handler_func)(void*, interrupt_type, std::uint32_t);
 
 struct location_descriptor
 {
@@ -74,16 +82,20 @@ struct jit_callback
     get_remaining_cycles_func   get_remaining_cycles;
     add_cycles_func             add_cycles;
 
+    interrupt_handler_func      interrupt_handler;
+
     dummy_func                  dummy;
 };
 
 typedef code_ptr     (*get_next_block_addr_func)(void*);
+typedef address      (*get_current_visitor_pc_func)(void*);
 
 struct jit_runtime_callback
 {
     void    *userdata;
 
-    get_next_block_addr_func    get_next_block_addr;
+    get_next_block_addr_func     get_next_block_addr;
+    get_current_visitor_pc_func  get_current_visitor_pc_func;
 };
 
 struct arm_recompile_block;
@@ -272,6 +284,8 @@ struct jit_state
     std::uint32_t cycles_to_run;
     std::uint32_t cycles_left;
 
+    address       exception_base;
+
     bool          should_stop;
 
     std::uint32_t           regs[16];
@@ -430,6 +444,7 @@ public:
     void ARMABI_call_function(void *func);
     void ARMABI_call_function_c(void *func, std::uint32_t arg1);
     void ARMABI_call_function_cc(void *func, std::uint32_t arg1, std::uint32_t arg2);
+    void ARMABI_call_function_ccc(void *func, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
 
     void ARMABI_call_function_c_promise_ret(void *func, std::uint32_t arg1);
 
@@ -513,6 +528,7 @@ struct arm_recompiler
         const std::uint8_t op2);
 
     void gen_arm32_msr(ArmGen::Operand2 op);
+    void gen_arm32_mrs(ArmGen::Operand2 op);
 
     void gen_arm32_b(address addr);
     void gen_arm32_bl(address addr);
@@ -545,6 +561,13 @@ struct arm_recompiler
     void gen_arm32_umulal(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg);
     void gen_arm32_smull(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg4);
     void gen_arm32_smlal(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::ARMReg reg3, ArmGen::ARMReg reg4);
+
+    void gen_arm32_lsr(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op);
+    void gen_arm32_lsl(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 op);
+
+    void gen_arm32_svc(const std::uint32_t ord);
+
+    /* All of these assumes that address are aligned */
 
     void gen_arm32_str(ArmGen::ARMReg reg1, ArmGen::ARMReg reg2, ArmGen::Operand2 base, bool subtract = false, 
         bool write_back = false, bool post_index = false);
@@ -596,6 +619,7 @@ public:
     jit_state               state;
 
     static code_ptr get_next_block_addr(void *userdata);
+    static address  get_current_visitor_pc(void *userdata);
 
     explicit jit(jit_callback callback);
 

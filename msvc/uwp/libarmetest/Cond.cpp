@@ -56,14 +56,12 @@ TEST_CASE("Normal sub and add if less than", "COND")
     jit->state.regs[0] = 120;
 
     write_memory32(&cbd, 1020, 0xE3500090);     // CMP R0, #144
-    write_memory32(&cbd, 1028, 0xC2800078);     // ADDGT r0, r0, #120
+    write_memory32(&cbd, 1028, 0xC2800078);     // ADDGT R0, R0, #120
     write_memory32(&cbd, 1032, 0xB280000A);     // ADDLT R0, R0, #10
     write_memory32(&cbd, 1036, 0xE2400032);     // SUB R0, R0, #50
     write_memory32(&cbd, 1040, 0xE12FFF1E);     // BX LR
 
     jit->execute();
-
-    int a = 5;
 
     REQUIRE(jit->state.regs[0] == 80);
 }
