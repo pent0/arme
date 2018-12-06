@@ -228,6 +228,7 @@
     <ClCompile Include="..\..\..\external\Catch2\include\reporters\catch_reporter_xml.cpp">
       <Filter>Catch</Filter>
     </ClCompile>
+    <ClCompile Include="Cond.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />

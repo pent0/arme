@@ -402,7 +402,7 @@ public:
         , bool gen_right_away = false)
         : jsi(state), callback(cb), jit_rt_callback(rt_cb)
     {
-        AllocCodeSpace(40000);
+        AllocCodeSpace(1024 * 1024 * 16);
 
         if (gen_right_away)
         {

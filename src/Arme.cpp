@@ -651,7 +651,10 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 
     case ARM_INS_CMP:
     {
-        recompiler->gen_arm32_cmp(get_next_reg_from_cs(arm), get_next_reg_from_cs(arm));
+        auto target = get_next_reg_from_cs(arm);
+        auto op = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_cmp(target, op);
         break;
     }
 
@@ -1287,7 +1290,11 @@ void arm_recompiler::gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t
 {
     ARMReg mapped_source = remap_arm_reg(rs);
 
+    // Flush all registers usage till this point
+    flush();
+
     block->PUSH(5, R0, R1, R2, R3, R14);
+
     block->MOVI2R(ARMReg::R0, reinterpret_cast<u32>(callback.userdata));
     block->MOVI2R(ARMReg::R2, (crn << 8) | (crn << 4) | op1);
     block->MOVI2R(ARMReg::R14, reinterpret_cast<u32>(callback.cp_read));
@@ -1297,6 +1304,10 @@ void arm_recompiler::gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t
     block->BL(ARMReg::R14);
 
     block->POP(5, R0, R1, R2, R3, R14);
+
+    // Load new SP and LR, R switching will be dynamiclly load later
+    block->LDR(remap_arm_reg(R_LR), JIT_STATE_REG, offsetof(jit_state, regs) + R_LR * sizeof(std::uint32_t));
+    block->LDR(remap_arm_reg(R_SP), JIT_STATE_REG, offsetof(jit_state, regs) + R_SP * sizeof(std::uint32_t));
 }
 
 void arm_recompiler::gen_arm32_msr(Operand2 op)
