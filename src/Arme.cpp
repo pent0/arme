@@ -679,6 +679,12 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         break;
     }
 
+    case ARM_INS_MRS:
+    {
+        recompiler->gen_arm32_mrs(get_next_reg_from_cs(arm));
+        break;
+    }
+
     case ARM_INS_TST:
     {
         auto dest = get_next_reg_from_cs(arm);
@@ -867,14 +873,6 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     
     loc = loc.advance(insn->size);
     last = std::string(insn->mnemonic) + " " + insn->op_str;
-    
-    /*
-    std::wstring a(last.begin(), last.end());
-    a += L' ';
-    a += std::to_wstring(get_current_visiting_pc());
-    a += L'\n';
-    OutputDebugString(a.c_str());
-    */
 
     cycles_count++;
     cycles_count_since_last_cond++;
@@ -1383,6 +1381,62 @@ void arm_recompiler::gen_arm32_mcr(const std::uint8_t coproc, const std::uint8_t
     block->POP(5, R0, R1, R2, R3, R14);
 }
 
+void arm_recompiler::gen_arm32_mrs(ArmGen::ARMReg dest)
+{
+    u32 inst = visitor.get_current_instruction_binary();
+    ARMReg dest_mapped = remap_arm_reg(dest);
+
+    if (inst & (1 << 22))
+    {
+        preserve_list list{ R4, R14 };
+        list.remove_reg(dest_mapped);
+        block->preserve(list);
+
+        // Load CPSR
+        block->LDR(R4, JIT_STATE_REG, offsetof(jit_state, cpsr));
+        block->AND(R4, R4, 0x1F);
+
+        label condition_meet_label;
+
+        block->CMP(R4, 0x11);
+        block->SetCC(CC_EQ);
+        block->LDR(dest_mapped, JIT_STATE_REG, offsetof(jit_state, fiq[7]));
+        block->B_L(condition_meet_label);
+        block->SetCC(CC_AL);
+
+        block->CMP(R4, 0x12);
+        block->SetCC(CC_EQ);
+        block->LDR(dest_mapped, JIT_STATE_REG, offsetof(jit_state, irq[2]));
+        block->B_L(condition_meet_label);
+        block->SetCC(CC_AL);
+
+        block->CMP(R4, 0x13);
+        block->SetCC(CC_EQ);
+        block->LDR(dest_mapped, JIT_STATE_REG, offsetof(jit_state, svc[2]));
+        block->B_L(condition_meet_label);
+        block->SetCC(CC_AL);
+        
+        block->CMP(R4, 0x17);
+        block->SetCC(CC_EQ);
+        block->LDR(dest_mapped, JIT_STATE_REG, offsetof(jit_state, abt[2]));
+        block->B_L(condition_meet_label);
+        block->SetCC(CC_AL);
+        
+        block->CMP(R4, 0x1B);
+        block->SetCC(CC_EQ);
+        block->LDR(dest_mapped, JIT_STATE_REG, offsetof(jit_state, und[2]));
+        block->B_L(condition_meet_label);
+        block->SetCC(CC_AL);
+
+        block->put_label(condition_meet_label);
+        block->return_back_what_preserved(list);
+    }
+    else
+    {
+        block->LDR(dest_mapped, JIT_STATE_REG, offsetof(jit_state, cpsr));
+    }
+}
+
 void arm_recompiler::gen_arm32_msr(Operand2 op)
 {
     u32 mask = 0;
@@ -1525,9 +1579,10 @@ void arm_recompiler::gen_arm32_svc(const std::uint32_t ord)
     block->POP(3, R0, R1, R2);
 
     block->STR(R5, JIT_STATE_REG, offsetof(jit_state, svc[2]));
-    
+    address ret_addr = visitor.get_current_pc() - (visitor.is_thumb() ? 3 : 4);
+
     // AAAAAAAAAA
-    block->MOVI2R(remap_arm_reg(R_LR), visitor.get_current_pc() - visitor.is_thumb() ? 3 : 4);
+    block->MOVI2R(remap_arm_reg(R_LR), ret_addr);
 
     // Avoid using R0. The parameter may be return or not.
     block->LDR(R4, JIT_STATE_REG, offsetof(jit_state, exception_base));
@@ -1546,6 +1601,13 @@ void arm_recompiler::save_pc_from_visitor()
 
 void arm_recompiler::set_pc(ArmGen::ARMReg reg, bool exchange)
 {
+    // Set PC
+    block->PUSH(2, R0, R14);
+    block->MOV(R0, reg);
+    block->MOVI2R(R14, (u32)callback.dummy);
+    block->BL(R14);
+    block->POP(2, R0, R14);
+
     block->STR(reg, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
 
     if (exchange)
@@ -1859,7 +1921,6 @@ void arm_recompiler::gen_arm32_blx(ArmGen::Operand2 op)
 
     if (op.GetType() == TYPE_REG)
     {
-        // Set PC
         set_pc(remap_arm_reg(static_cast<ARMReg>(op.Rm())));
         gen_block_link();
     }
@@ -2524,7 +2585,7 @@ void arm_recompiler::gen_arm32_strb(ARMReg reg1, ARMReg reg2, Operand2 base, boo
 
 void arm_recompiler::gen_arm32_ldrb(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.read_mem8, reg1, reg2, base, subtract, write_back, post_index);
+    gen_memory_read(callback.read_mem8, reg1, reg2, base, subtract, write_back, post_index);
 }
 
 void arm_recompiler::gen_arm32_strh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
@@ -2534,7 +2595,7 @@ void arm_recompiler::gen_arm32_strh(ARMReg reg1, ARMReg reg2, Operand2 base, boo
 
 void arm_recompiler::gen_arm32_ldrh(ARMReg reg1, ARMReg reg2, Operand2 base, bool subtract, bool write_back, bool post_index)
 {
-    gen_memory_write(callback.read_mem16, reg1, reg2, base, subtract, write_back, post_index);
+    gen_memory_read(callback.read_mem16, reg1, reg2, base, subtract, write_back, post_index);
 }
 
 void arm_recompiler::gen_block_link()

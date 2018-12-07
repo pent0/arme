@@ -528,7 +528,7 @@ struct arm_recompiler
         const std::uint8_t op2);
 
     void gen_arm32_msr(ArmGen::Operand2 op);
-    void gen_arm32_mrs(ArmGen::Operand2 op);
+    void gen_arm32_mrs(ArmGen::ARMReg dest);
 
     void gen_arm32_b(address addr);
     void gen_arm32_bl(address addr);
