@@ -54,15 +54,30 @@ static std::uint32_t decode_imm12mod(Operand2 op)
 
 void arm_analyst::init()
 {
+    insn = nullptr;
     cs_err err = cs_open(CS_ARCH_ARM, CS_MODE_ARM, &handle);
 
     if (err != CS_ERR_OK)
     {
-        assert(false && "Can't open the disassembler");
+        assert(false && "Can't open the disassembler for ARM");
+    }
+
+    err = cs_open(CS_ARCH_ARM, CS_MODE_THUMB, &handle_thumb);
+
+    if (err != CS_ERR_OK)
+    {
+        assert(false && "Can't open the disassembler for thumb");
     }
 
     // Add more details to examine instruction
     cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+    cs_option(handle_thumb, CS_OPT_DETAIL, CS_OPT_ON);
+}
+
+arm_analyst::~arm_analyst()
+{
+    handle_thumb ? cs_close(&handle_thumb) : 0;
+    handle ? cs_close(&handle) : 0;
 }
 
 arm_analyst::arm_analyst(jit_callback &callback)
@@ -73,16 +88,32 @@ arm_analyst::arm_analyst(jit_callback &callback)
 
 cs_insn *arm_analyst::disassemble_instructions(const address addr, bool thumb)
 {
-    std::uint32_t op = callback.read_code32 ? callback.read_code32(callback.userdata, addr)
-        : callback.read_mem32(callback.userdata, addr);
-    auto count = cs_disasm(handle, reinterpret_cast<const std::uint8_t*>(&op), thumb ? 2 : 4, addr, 1,
-        &insn);
+    if (insn)
+    {
+        cs_free(insn, 1);
+    }
+
+    if (!thumb)
+    {
+        std::uint32_t op = callback.read_code32 ? callback.read_code32(callback.userdata, addr)
+            : callback.read_mem32(callback.userdata, addr);
+        auto count = cs_disasm(handle, reinterpret_cast<const std::uint8_t*>(&op), 4, addr, 1,
+            &insn);
+    }
+    else
+    {
+        std::uint16_t op = static_cast<std::uint16_t>(callback.read_code32 ? callback.read_code32(callback.userdata, addr)
+            : callback.read_mem32(callback.userdata, addr));
+        auto count = cs_disasm(handle_thumb, reinterpret_cast<const std::uint8_t*>(&op), 2, addr, 1,
+            &insn);
+    }
 
     if (!insn)
     {
         const char *err = cs_strerror(cs_errno(handle));
-        int a = 5;
+        assert(false && "Can't disassemble instruction");
     }
+
     return insn;
 }
 
@@ -630,8 +661,17 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     case ARM_INS_##name:                       \
     {                                       \
         auto dest = get_next_reg_from_cs(arm);  \
-        auto source = get_next_reg_from_cs(arm);    \
-        auto source2 = get_next_op_from_cs(arm);    \
+        ARMReg source;                  \
+        Operand2 source2;               \
+        if (arm->op_count == 2)     \
+        {               \
+            source = dest;      \
+            source2 = get_next_op_from_cs(arm);   \
+        }               \
+        else {          \
+            source = get_next_reg_from_cs(arm);    \
+            source2 = get_next_op_from_cs(arm);    \
+        }               \
         recompiler->gen_arm32_##func_name(dest, source, source2);   \
         break;          \
     }
@@ -703,6 +743,15 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         break;
     }
 
+    case ARM_INS_CMN:
+    {
+        auto target = get_next_reg_from_cs(arm);
+        auto op = get_next_op_from_cs(arm);
+
+        recompiler->gen_arm32_cmn(target, op);
+        break;
+    }
+
     case ARM_INS_B:
     {
         // Capstone disassemble imm as address
@@ -762,9 +811,18 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
 #define DECLARE_ALU_BASE(insn, func_name)      \
     case ARM_INS_##insn:            \
     {                               \
-        auto r1 = get_next_reg_from_cs(arm);                    \
-        auto r2 = get_next_reg_from_cs(arm, false);             \
         bool post = (crr_inst & (1 << 24)) ? false : true;      \
+        auto r1 = get_next_reg_from_cs(arm);                    \
+        if (arm->operands[op_counter].mem.index != ARM_REG_INVALID) \
+        { \
+            ARMReg r2 = cs_arm_reg_to_reg(arm->operands[op_counter].mem.base);   \
+            Operand2 op(cs_arm_reg_to_reg(arm->operands[op_counter].mem.index),  \
+                ShiftType::ST_LSL, arm->operands[op_counter].shift.value);  \
+            recompiler->gen_arm32_##func_name(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback   \
+                , post);                                                                                         \
+            break;                                                                                               \
+        }                                                       \
+        auto r2 = get_next_reg_from_cs(arm, false);             \
         Operand2 op;                                            \
         if (post)                                               \
         {                                                       \
@@ -772,12 +830,11 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
         }                                                       \
         else                                                    \
         {                                                       \
-            op = arm->operands[op_counter].mem.index != ARM_REG_INVALID ? Operand2(cs_arm_reg_to_reg(arm->operands[op_counter].mem.index),  \
-                ShiftType::ST_LSL, arm->operands[op_counter].mem.lshift) : encode_imm(arm->operands[op_counter].mem.disp);                  \
-        }                                                                                                                                   \
-        recompiler->gen_arm32_##func_name(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback                                  \
-            , post);                                                                                                                        \
-        break;                                                                                                                              \
+            op = encode_imm(std::abs(arm->operands[op_counter].mem.disp));                  \
+        }                                                       \
+        recompiler->gen_arm32_##func_name(r1, r2, op, arm->operands[op_counter].subtracted, arm->writeback       \
+            , post);                                                                                             \
+        break;                                                                                                   \
     }
 
 #define DECLARE_LDM_BASE(inst, ascending, inc_before)   \
@@ -873,6 +930,11 @@ void arm_instruction_visitor::recompile_single_instruction(arm_recompiler *recom
     
     loc = loc.advance(insn->size);
     last = std::string(insn->mnemonic) + " " + insn->op_str;
+
+    if (loc.pc >= 0xffff0000)
+    {
+        int a = 5;
+    }
 
     cycles_count++;
     cycles_count_since_last_cond++;
@@ -997,7 +1059,7 @@ void arm_recompile_block::return_back_what_preserved(preserve_list &reg_list)
 
     default:
     {
-        for (size_t i = reg_list.size() - 1; i >= 0; i--)
+        for (int32_t i = reg_list.size() - 1; i >= 0; i--)
         {
             POP(1, reg_list.regs[i]);
         }
@@ -1295,31 +1357,45 @@ ARMReg arm_recompiler::remap_arm_reg(ARMReg reg)
 
 Operand2 arm_recompiler::remap_operand2(Operand2 op)
 {
-    if (op.GetType() == OpType::TYPE_REG)
+    if (op.GetType() == OpType::TYPE_REG || op.GetType() == OpType::TYPE_IMMSREG)
     {
-        ARMReg reg = static_cast<ARMReg>(op.Rm());
-
+        ARMReg reg = static_cast<ARMReg>(op.GetRawValue());
+        ARMReg mapped_reg = INVALID_REG;
+        
         switch (reg)
         {
         case ARMReg::R13:
         {
-            return ARMReg::R11;
+            mapped_reg = ARMReg::R11;
+            break;
         }
 
         case ARMReg::R_LR:
         {
-            return ARMReg::R10;
+            mapped_reg = ARMReg::R10;
+            break;
         }
 
         case ARMReg::R15:
         {
+            assert(op.GetType() != TYPE_IMMSREG);
             return visitor.get_current_pc();
         }
 
         default:
-            return allocator.map_reg(block, reg, visitor.get_current_visiting_pc(),
+            mapped_reg = allocator.map_reg(block, reg, visitor.get_current_visiting_pc(),
                 visitor.is_thumb());
+            break;
         }
+
+        assert(mapped_reg != INVALID_REG);
+
+        if (op.GetType() == TYPE_IMMSREG)
+        {
+            return Operand2(mapped_reg, op.GetShiftType(), op.GetShiftValue());
+        }
+
+        return Operand2(mapped_reg);
     }
 
     return op;
@@ -1579,7 +1655,7 @@ void arm_recompiler::gen_arm32_svc(const std::uint32_t ord)
     block->POP(3, R0, R1, R2);
 
     block->STR(R5, JIT_STATE_REG, offsetof(jit_state, svc[2]));
-    address ret_addr = visitor.get_current_pc() - (visitor.is_thumb() ? 3 : 4);
+    address ret_addr = visitor.get_current_pc() - (visitor.is_thumb() ? 1 : 4);
 
     // AAAAAAAAAA
     block->MOVI2R(remap_arm_reg(R_LR), ret_addr);
@@ -1601,12 +1677,14 @@ void arm_recompiler::save_pc_from_visitor()
 
 void arm_recompiler::set_pc(ArmGen::ARMReg reg, bool exchange)
 {
+    /*
     // Set PC
     block->PUSH(2, R0, R14);
     block->MOV(R0, reg);
     block->MOVI2R(R14, (u32)callback.dummy);
     block->BL(R14);
     block->POP(2, R0, R14);
+    */
 
     block->STR(reg, JIT_STATE_REG, offsetof(jit_state, regs) + R15 * sizeof(std::uint32_t));
 
@@ -1885,7 +1963,7 @@ void arm_recompiler::gen_arm32_b(address addr)
 
 void arm_recompiler::gen_arm32_bl(address addr)
 {
-    auto ret_addr = visitor.get_current_visiting_pc() +
+    auto ret_addr = visitor.get_current_pc() -
         (visitor.is_thumb() ? 1 : 4);
     
     // Only increase 1 if the current is thumb.
@@ -1914,7 +1992,7 @@ void arm_recompiler::gen_arm32_bx(ArmGen::Operand2 op)
 
 void arm_recompiler::gen_arm32_blx(ArmGen::Operand2 op)
 {
-    auto ret_addr = visitor.get_current_visiting_pc() +
+    auto ret_addr = visitor.get_current_pc() -
         (visitor.is_thumb() ? 1 : 4);
 
     block->MOVI2R(remap_arm_reg(R_LR), ret_addr);
@@ -1970,7 +2048,9 @@ void arm_recompiler::gen_arm32_add(ARMReg reg1, ARMReg reg2, Operand2 op)
             // Add them right away, and move this value to destination
             // register
             std::uint32_t val = visitor.get_current_pc() + decode_imm12mod(op);
-            block->MOVI2R(reg1, val);
+            block->MOVI2R(remap_arm_reg(reg1), val);
+
+            // TODO: Update cpsr
 
             return;
         }
@@ -2009,7 +2089,11 @@ void arm_recompiler::gen_arm32_sub(ARMReg reg1, ARMReg reg2, Operand2 op)
             // Add them right away, and move this value to destination
             // register
             std::uint32_t val = visitor.get_current_pc() - +decode_imm12mod(op);
-            block->MOVI2R(reg1, val);
+            block->MOVI2R(remap_arm_reg(reg1), val);
+
+            // TODO: Update cpsr
+
+            return;
         }
         else
         {
@@ -2387,13 +2471,16 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
     {
         save_list.remove_reg(mapped_base_reg);
     }
+    else
+    {
+        save_list.add_reg(mapped_base_reg);
+    }
 
     block->preserve(save_list);
 
     // Move register 2 to reg4
     block->MOV(ARMReg::R4, mapped_base_reg);
-    block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
-
+    
     if (!post_indexed)
     {
         // Next, add them with base. The value will stay in R4
@@ -2439,11 +2526,7 @@ void arm_recompiler::gen_memory_write(void *func, ARMReg source, ARMReg base, Op
 
         block->MOV(mapped_base_reg, ARMReg::R4);
     }
-    else
-    {
-        block->LDR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
-    }
-
+    
     if (op.GetType() == TYPE_REG)
     {
         allocator.release_all_spill_lock();
@@ -2495,16 +2578,20 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
 
     save_list.remove_reg(mapped_dest_reg);
     
-    if (write_back)
+    if (write_back || mapped_dest_reg == mapped_base_reg)
     {
         save_list.remove_reg(mapped_base_reg);
+    }
+    else
+    {
+        save_list.add_reg(mapped_base_reg);
     }
 
     block->preserve(save_list);
 
     // Move register 2 to reg4
     block->MOV(ARMReg::R4, mapped_base_reg);
-    block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
+    // block->STR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
 
     if (!post_indexed)
     {
@@ -2554,10 +2641,11 @@ void arm_recompiler::gen_memory_read(void *func, ARMReg dest, ARMReg base, Opera
         // We are still moving, in case function accidently overwrite the mapped base
         block->MOV(mapped_base_reg, ARMReg::R4);
     }
+    /*
     else
     {
         block->LDR(mapped_base_reg, JIT_STATE_REG, offsetof(jit_state, gar));
-    }
+    }*/
 
     if (op.GetType() == TYPE_REG)
     {

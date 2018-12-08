@@ -97,9 +97,33 @@ TEST_CASE("LDR register without writeback", "ALU")
     jit->state.cycles_left = 2;
     jit->execute();
 
+    int a = 5;
+
     REQUIRE(jit->state.regs[0] == 9250);
     REQUIRE(jit->state.regs[3] == 9250);
+    REQUIRE(jit->state.regs[4] == 1058);
     REQUIRE(jit->state.regs[5] == 1054);
+}
+
+TEST_CASE("LDR with LSL", "ALU")
+{
+    Reset();
+    cbd.ticks_left = 6;
+
+    jit->state.regs[15] = 1038;
+    jit->state.regs[14] = 1038;
+    jit->state.regs[1] = 1024;
+    jit->state.regs[3] = 12;
+    jit->state.regs[0] = 0;
+
+    write_memory32(&cbd, 1072, 89712);
+
+    write_memory32(&cbd, 1038, 0xE7910103);      // LDR R0, [R1, R3, LSL #2]
+    write_memory32(&cbd, 1042, 0xE12FFF1E);      // BX LR
+
+    jit->execute();
+
+    REQUIRE(jit->state.regs[0] == 89712);
 }
 
 TEST_CASE("STR register without writeback", "ALU")

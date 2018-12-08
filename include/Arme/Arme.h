@@ -163,6 +163,8 @@ struct arm_analyst
 {
 private:
     csh         handle;
+    csh         handle_thumb;
+
     cs_insn    *insn;
 
     jit_callback callback;
@@ -171,6 +173,7 @@ private:
 
 public:
     explicit arm_analyst(jit_callback &callback);
+    ~arm_analyst();
 
     cs_insn *disassemble_instructions(const address addr, bool thumb);
     arm_reg_usage   analysis_usage_reg(ArmGen::ARMReg reg, const address addr,

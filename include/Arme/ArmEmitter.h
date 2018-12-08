@@ -122,6 +122,17 @@ public:
 	{
 		return Type;
 	}
+
+    ShiftType GetShiftType() const
+    {
+        return Shift;
+    }
+
+    u8 GetShiftValue() const
+    {
+        return IndexOrShift;
+    }
+
 	Operand2() {} 
 	Operand2(u32 imm, OpType type = TYPE_IMM)
 	{ 
